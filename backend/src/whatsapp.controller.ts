@@ -5,6 +5,11 @@ import { WhatsappService } from './whatsapp.service';
 export class WhatsappController {
   constructor(private readonly wa: WhatsappService) {}
 
+  @Get()
+  healthCheck() {
+    return { status: 'ok', service: 'whatsapp-backend', connected: true };
+  }
+
   @Get('qr')
   getQr() {
     return { qr: this.wa.getQr(), ready: this.wa.isReady() };
