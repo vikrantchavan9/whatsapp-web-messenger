@@ -3,7 +3,7 @@
 import React, { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import axios from "axios";
-import { Send, Wifi, Smartphone } from "lucide-react";
+import { Send, Upload, Wifi, Smartphone } from "lucide-react";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL!;
@@ -13,6 +13,8 @@ interface Message {
   body: string;
   timestamp: number;
   fromMe?: boolean;
+  mediaUrl?: string;
+  caption?: string;
 }
 
 export default function Home() {
@@ -21,8 +23,11 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [to, setTo] = useState("");
   const [text, setText] = useState("");
+  const [file, setFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
+  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
   // ✅ Connect to Socket.IO once
   useEffect(() => {
@@ -77,24 +82,66 @@ export default function Home() {
     }
   }, [messages]);
 
-  // ✅ Send message via backend
+  // ✅ Convert file to Base64
+  async function fileToBase64(file: File): Promise<string> {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      reader.onload = () => resolve(reader.result as string);
+      reader.onerror = reject;
+      reader.readAsDataURL(file);
+    });
+  }
+
+  // ✅ Send text or media
   async function send(e: React.FormEvent) {
     e.preventDefault();
-    if (!to || !text) return alert("Enter number and message");
+    if (!to) return alert("Enter a recipient number");
 
     try {
-      await axios.post(`${API_URL}/send`, { to, message: text });
-      setMessages((prev) => [
-        ...prev,
-        {
-          from: "You",
-          body: text,
-          timestamp: Date.now() / 1000,
-          fromMe: true,
-        },
-      ]);
-      setText("");
+      if (file) {
+        setUploading(true);
+        const base64Data = await fileToBase64(file);
+        const res = await axios.post(`${API_URL}/send-media`, {
+          to,
+          media: base64Data,
+          caption: text || "",
+        });
+
+        setMessages((prev) => [
+          ...prev,
+          {
+            from: "You",
+            body: text || file.name,
+            timestamp: Date.now() / 1000,
+            fromMe: true,
+            mediaUrl: URL.createObjectURL(file),
+            caption: text,
+          },
+        ]);
+
+        setFile(null);
+        setText("");
+        setUploading(false);
+
+      // ✅ Clear actual file input element too
+      if (fileInputRef.current) {
+        fileInputRef.current.value = "";
+      }
+      } else {
+        await axios.post(`${API_URL}/send`, { to, message: text });
+        setMessages((prev) => [
+          ...prev,
+          {
+            from: "You",
+            body: text,
+            timestamp: Date.now() / 1000,
+            fromMe: true,
+          },
+        ]);
+        setText("");
+      }
     } catch (err: any) {
+      setUploading(false);
       alert("Send failed: " + (err.response?.data || err.message));
     }
   }
@@ -185,12 +232,30 @@ export default function Home() {
                 onChange={(e) => setText(e.target.value)}
                 className="flex-1 bg-gray-800 text-gray-100 p-3 rounded-lg border border-gray-700 focus:border-green-500 outline-none"
               />
+
+              <label className="flex items-center justify-center bg-gray-800 text-gray-200 border border-gray-700 rounded-lg px-3 cursor-pointer hover:bg-gray-700 transition-colors">
+                <Upload size={18} className="mr-1" />
+                <span className="text-sm">File</span>
+                <input
+                  type="file"
+                  ref={fileInputRef}
+                  hidden
+                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                />
+              </label>
+
+              
               <button
                 type="submit"
-                className="bg-green-500 hover:bg-green-600 text-white font-medium flex items-center justify-center gap-2 px-4 rounded-lg transition-colors"
+                disabled={uploading}
+                className={`${
+                  uploading
+                    ? "bg-gray-500 cursor-not-allowed"
+                    : "bg-green-500 hover:bg-green-600"
+                } text-white font-medium flex items-center justify-center gap-2 px-4 rounded-lg transition-colors`}
               >
                 <Send size={18} />
-                Send
+                {uploading ? "Sending..." : "Send"}
               </button>
             </form>
           </div>
