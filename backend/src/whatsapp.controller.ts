@@ -37,4 +37,21 @@ export class WhatsappController {
       throw new HttpException(String(err), 500);
     }
   }
+
+  @Post('/send-media')
+async sendMedia(@Body() body) {
+  const { to, media, caption } = body;
+
+  if (!to || !media) {
+    throw new HttpException('Missing "to" or "media" in request body', 400);
+  }
+
+  try {
+    const res = await this.wa.sendMedia(to, media, caption);
+    return { ok: true, res };
+  } catch (error) {
+    console.error('❌ Media send error:', error);
+    return { ok: false, error: error.message || error };
+  }
+}
 }
