@@ -10,6 +10,17 @@ export class WhatsappController {
     return { status: 'ok', service: 'whatsapp-backend', connected: true };
   }
 
+  @Get('/status')
+  getStatus() {
+  const client = this.wa.client;
+  if (!client) return { status: 'not_initialized' };
+  return {
+    ready: this.wa.isReady(),
+    info: client.info || null,
+    authenticated: !!client.info?.wid,
+  };
+
+  }
   @Get('qr')
   getQr() {
     return { qr: this.wa.getQr(), ready: this.wa.isReady() };

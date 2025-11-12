@@ -3,7 +3,6 @@ import { Client, LocalAuth, Message } from 'whatsapp-web.js';
 import qrcode from 'qrcode';
 import { Server as IOServer } from 'socket.io';
 import * as http from 'http';
-import puppeteer from 'puppeteer';
 
 @Injectable()
 export class WhatsappService implements OnModuleInit {
@@ -24,16 +23,17 @@ export class WhatsappService implements OnModuleInit {
     this.client = new Client({
       authStrategy: new LocalAuth(),
       puppeteer: {
-      headless: true,
-      executablePath: puppeteer.executablePath(),   // ✅ Puppeteer-managed Chromium
-      args: [
-        '--no-sandbox',
-        '--disable-setuid-sandbox',
-        '--disable-dev-shm-usage',
-        '--no-zygote',
-        '--single-process',
-        '--disable-gpu',
-      ],
+        headless: true,
+        args: [
+          '--no-sandbox',
+          '--disable-setuid-sandbox',
+          '--disable-dev-shm-usage',
+          '--disable-accelerated-2d-canvas',
+          '--no-first-run',
+          '--no-zygote',
+          '--single-process',
+          '--disable-gpu'
+        ],
       },
     });
 
@@ -55,7 +55,6 @@ export class WhatsappService implements OnModuleInit {
         body: msg.body,
         timestamp: msg.timestamp,
       });
-      console.log(`📩 ${msg.from}: ${msg.body}`);
     });
 
     this.client.initialize().catch(err => console.error('Client init error', err));
@@ -67,7 +66,7 @@ export class WhatsappService implements OnModuleInit {
 async sendMessage(to: string, message: string) {
   if (!this.ready) throw new Error('Client not ready');
 
-  // Clean and normalize number
+  // 🧩 Clean and normalize number
   let phone = to.replace(/\D/g, ''); // remove all non-digits
 
   // If number has only 10 digits (no country code), assume +91 (India)
