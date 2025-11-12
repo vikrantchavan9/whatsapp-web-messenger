@@ -18,7 +18,7 @@ export class WhatsappService implements OnModuleInit {
   initClient() {
     const httpServer = http.createServer();
     this.io = new IOServer(httpServer, { cors: { origin: '*' } });
-    httpServer.listen(3002, () => console.log('Socket.IO server at :3002'));
+    httpServer.listen(5000, () => console.log('Socket.IO server at :5000'));
 
     this.client = new Client({
       authStrategy: new LocalAuth(),
@@ -55,6 +55,7 @@ export class WhatsappService implements OnModuleInit {
         body: msg.body,
         timestamp: msg.timestamp,
       });
+      console.log(`📩 ${msg.from}: ${msg.body}`);
     });
 
     this.client.initialize().catch(err => console.error('Client init error', err));
@@ -81,9 +82,7 @@ async sendMessage(to: string, message: string) {
 
   // Construct JID
   const jid = `${phone}@c.us`;
-
   console.log(`📨 Sending to ${jid}: ${message}`);
-
   const res = await this.client.sendMessage(jid, message);
   return res;
 }

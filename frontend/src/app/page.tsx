@@ -21,39 +21,63 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [to, setTo] = useState("");
   const [text, setText] = useState("");
+  const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
 
-  // Connect socket + listen to QR, ready, and incoming messages
+  // ✅ Connect to Socket.IO once
   useEffect(() => {
-  const socket = io(SOCKET_URL, { transports: ["websocket"] });
+    const socket: Socket = io(SOCKET_URL, { transports: ["websocket"] });
+    socketRef.current = socket;
 
-  socket.on("qr", (dataUrl: string) => setQr(dataUrl));
-  socket.on("ready", () => {
-    setReady(true);
-    setQr(null);
-  });
-  socket.on("message", (m: any) => {
-    setMessages(prev => [...prev, { ...m, fromMe: false }]);
-  });
+    console.log("🔌 Connecting to socket:", SOCKET_URL);
 
-  // Fetch QR status once at start
-  (async () => {
-    try {
-      const res = await axios.get(`${API_URL}/qr`);
-      if (res.data.qr) setQr(res.data.qr);
-      if (res.data.ready) setReady(true);
-    } catch (err) {
-      console.error(err);
+    // Listen for QR code
+    socket.on("qr", (dataUrl: string) => {
+      console.log("📸 QR received");
+      setQr(dataUrl);
+    });
+
+    // Listen for ready event
+    socket.on("ready", () => {
+      console.log("✅ WhatsApp client ready");
+      setReady(true);
+      setQr(null);
+    });
+
+    // Listen for messages
+    socket.on("message", (m: Message) => {
+      console.log("📩 Incoming message:", m);
+      setMessages((prev) => [...prev, { ...m, fromMe: false }]);
+    });
+
+    socket.on("disconnect", () => console.log("❌ Socket disconnected"));
+
+    // Fetch QR/ready state on load
+    (async () => {
+      try {
+        const res = await axios.get(`${API_URL}/qr`);
+        if (res.data.qr) setQr(res.data.qr);
+        if (res.data.ready) setReady(true);
+      } catch (err) {
+        console.error("Error fetching QR:", err);
+      }
+    })();
+
+    // ✅ Clean up socket connection on unmount
+    return () => {
+      socket.disconnect();
+      console.log("🧹 Socket disconnected");
+    };
+  }, []);
+
+  // ✅ Auto-scroll to latest message
+  useEffect(() => {
+    if (messagesEndRef.current) {
+      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
     }
-  })();
+  }, [messages]);
 
-  // ✅ Return a cleanup function, not the socket itself
-  return () => {
-    socket.disconnect();
-  };
-}, []);
-
-  // Send message
+  // ✅ Send message via backend
   async function send(e: React.FormEvent) {
     e.preventDefault();
     if (!to || !text) return alert("Enter number and message");
@@ -75,12 +99,10 @@ export default function Home() {
     }
   }
 
-  // Format timestamp helper
   function formatTime(t: number) {
     return new Date(t * 1000).toLocaleTimeString();
   }
 
-  // UI
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-2xl bg-gray-900 rounded-2xl shadow-lg border border-gray-800 overflow-hidden">
@@ -124,9 +146,7 @@ export default function Home() {
                 messages.map((m, i) => (
                   <div
                     key={i}
-                    className={`flex ${
-                      m.fromMe ? "justify-end" : "justify-start"
-                    }`}
+                    className={`flex ${m.fromMe ? "justify-end" : "justify-start"}`}
                   >
                     <div
                       className={`max-w-xs p-3 rounded-lg text-sm ${
@@ -143,9 +163,10 @@ export default function Home() {
                   </div>
                 ))
               )}
+              <div ref={messagesEndRef} />
             </div>
 
-            {/* Message form */}
+            {/* Message Form */}
             <form
               onSubmit={send}
               className="flex gap-2 p-4 border-t border-gray-800 bg-gray-900"
