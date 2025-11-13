@@ -98,13 +98,16 @@ export default function Home() {
     if (!to) return alert("Enter a recipient number");
 
     try {
-      if (file) {
+        if (file) {
         setUploading(true);
-        const base64Data = await fileToBase64(file);
-        const res = await axios.post(`${API_URL}/send-media`, {
-          to,
-          media: base64Data,
-          caption: text || "",
+
+        const formData = new FormData();
+        formData.append("file", file);
+        formData.append("to", to);
+        formData.append("caption", text || "");
+
+        await axios.post(`${API_URL}/send-media`, formData, {
+          headers: { "Content-Type": "multipart/form-data" },
         });
 
         setMessages((prev) => [
@@ -123,7 +126,7 @@ export default function Home() {
         setText("");
         setUploading(false);
 
-      // ✅ Clear actual file input element too
+      // ✅ Clear file input so same file can be re-selected
       if (fileInputRef.current) {
         fileInputRef.current.value = "";
       }
@@ -202,6 +205,53 @@ export default function Home() {
                           : "bg-gray-800 text-gray-100"
                       }`}
                     >
+                      
+                    {m.mediaUrl ? (
+                        <>
+                          {/* 🖼 Image */}
+                          {m.mediaUrl.match(/\.(jpg|jpeg|png|gif)$/i) && (
+                            <img
+                              src={m.mediaUrl}
+                              alt="media"
+                              className="rounded-lg mb-2 max-h-48"
+                            />
+                          )}
+
+                          {/* 🎥 Video */}
+                          {m.mediaUrl.match(/\.(mp4|mov|webm)$/i) && (
+                            <video
+                              src={m.mediaUrl}
+                              controls
+                              className="rounded-lg mb-2 max-h-48"
+                            />
+                          )}
+
+                          {/* 🎧 Audio */}
+                          {m.mediaUrl.match(/\.(mp3|wav|ogg)$/i) && (
+                            <audio
+                              src={m.mediaUrl}
+                              controls
+                              className="w-full mb-2"
+                            />
+                          )}
+
+                          {/* 📄 Document / Other Files */}
+                          {!m.mediaUrl.match(
+                            /\.(jpg|jpeg|png|gif|mp4|mov|webm|mp3|wav|ogg)$/i
+                          ) && (
+                            <a
+                              href={m.mediaUrl}
+                              download={m.body || "file"}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="block text-sm bg-gray-700 text-white px-3 py-2 rounded-lg hover:bg-gray-600 transition-colors mb-2"
+                            >
+                              📄 {m.body || "Download file"}
+                            </a>
+                          )}
+                        </>
+                      ) : null}
+
                       <div>{m.body}</div>
                       <div className="text-xs text-gray-300 mt-1 text-right">
                         {m.fromMe ? "You" : m.from} • {formatTime(m.timestamp)}

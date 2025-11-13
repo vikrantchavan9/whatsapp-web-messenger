@@ -1,5 +1,9 @@
-import { Controller, Get, Post, Body, HttpException } from '@nestjs/common';
+import { Controller, Get, Post, Body, HttpException, UseInterceptors, UploadedFile} from '@nestjs/common';
 import { WhatsappService } from './whatsapp.service';
+import { FileInterceptor } from '@nestjs/platform-express';
+import { Request } from "express";
+import * as path from 'path';
+import { diskStorage } from "multer";
 
 @Controller()
 export class WhatsappController {
@@ -38,20 +42,38 @@ export class WhatsappController {
     }
   }
 
-  @Post('/send-media')
-async sendMedia(@Body() body) {
-  const { to, media, caption } = body;
+  @Post("/send-media")
+  @UseInterceptors(
+  FileInterceptor("file", {
+    storage: diskStorage({
+      destination: "./uploads",
+      filename: (req, file, callback) =>
+        callback(null, `${Date.now()}-${file.originalname}`),
+    }),
+  })
+)
+  async sendMedia(
+    @UploadedFile() file: Express.Multer.File,
+    @Body() body
+  ) {
+    console.log("Uploaded file received:", file); // DEBUG
 
-  if (!to || !media) {
-    throw new HttpException('Missing "to" or "media" in request body', 400);
-  }
+    if (!file) {
+      throw new HttpException("No file uploaded", 400);
+    }
 
-  try {
-    const res = await this.wa.sendMedia(to, media, caption);
-    return { ok: true, res };
-  } catch (error) {
-    console.error('❌ Media send error:', error);
-    return { ok: false, error: error.message || error };
+    const { to, caption } = body;
+    if (!to) throw new HttpException("Missing recipient number", 400);
+
+    const filePath = path.resolve(file.path);
+    console.log("Resolved file path:", filePath);
+
+    try {
+      const res = await this.wa.sendMedia(to, filePath, caption);
+      return { ok: true, res };
+    } catch (err) {
+      console.error("❌ Media send error:", err);
+      throw new HttpException(err.message || err, 500);
+    }
   }
-}
 }
