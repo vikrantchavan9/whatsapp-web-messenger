@@ -14,6 +14,7 @@ interface Message {
   timestamp: number;
   fromMe?: boolean;
   mediaUrl?: string;
+  mediaType?: string;
   caption?: string;
 }
 
@@ -25,288 +26,284 @@ export default function Home() {
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
-  const messagesEndRef = useRef<HTMLDivElement>(null);
+
   const socketRef = useRef<Socket | null>(null);
+  const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // ✅ Connect to Socket.IO once
+  // ----- SOCKET.IO CONNECTION -----
   useEffect(() => {
     const socket: Socket = io(SOCKET_URL, { transports: ["websocket"] });
     socketRef.current = socket;
 
     console.log("🔌 Connecting to socket:", SOCKET_URL);
 
-    // Listen for QR code
-    socket.on("qr", (dataUrl: string) => {
-      console.log("📸 QR received");
-      setQr(dataUrl);
+    socket.on("qr", (qrData: string) => {
+      console.log("📸 QR Received");
+      setQr(qrData);
     });
 
-    // Listen for ready event
     socket.on("ready", () => {
-      console.log("✅ WhatsApp client ready");
+      console.log("✅ WhatsApp ready");
       setReady(true);
       setQr(null);
     });
 
-    // Listen for messages
-    socket.on("message", (m: Message) => {
-      console.log("📩 Incoming message:", m);
-      setMessages((prev) => [...prev, { ...m, fromMe: false }]);
+    socket.on("message", (msg: Message) => {
+      console.log("📩 Incoming:", msg);
+      setMessages((prev) => [...prev, { ...msg, fromMe: false }]);
     });
 
-    socket.on("disconnect", () => console.log("❌ Socket disconnected"));
+    socket.on("disconnect", () => console.log("❌ Disconnected"));
 
-    // Fetch QR/ready state on load
+    // Fetch QR state once on load
     (async () => {
       try {
         const res = await axios.get(`${API_URL}/qr`);
         if (res.data.qr) setQr(res.data.qr);
         if (res.data.ready) setReady(true);
       } catch (err) {
-        console.error("Error fetching QR:", err);
+        console.error("QR fetch error:", err);
       }
     })();
 
-    // ✅ Clean up socket connection on unmount
     return () => {
       socket.disconnect();
       console.log("🧹 Socket disconnected");
     };
   }, []);
 
-  // ✅ Auto-scroll to latest message
+  // Auto scroll
   useEffect(() => {
-    if (messagesEndRef.current) {
-      messagesEndRef.current.scrollIntoView({ behavior: "smooth" });
-    }
+    messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [messages]);
 
-  // ✅ Convert file to Base64
-  async function fileToBase64(file: File): Promise<string> {
-    return new Promise((resolve, reject) => {
-      const reader = new FileReader();
-      reader.onload = () => resolve(reader.result as string);
-      reader.onerror = reject;
-      reader.readAsDataURL(file);
-    });
+  // ----- MEDIA CATEGORY (MIME BASED) -----
+  function getMediaCategory(type: string | undefined) {
+    if (!type) return "other";
+    if (type.startsWith("image/")) return "image";
+    if (type.startsWith("video/")) return "video";
+    if (type.startsWith("audio/")) return "audio";
+    return "document"; // pdf, docs, zip...
   }
-    // ✅ Send text or media
-    async function send(e: React.FormEvent) {
-      e.preventDefault();
-      if (!to) return alert("Enter a recipient number");
 
-      try {
-        // --- MULTIPLE FILES CASE ---
-        if (files && files.length > 0) {
-          setUploading(true);
-          for (const f of files) {
-            const formData = new FormData();
-            formData.append("file", f);
-            formData.append("to", to);
-            formData.append("caption", text || "");
-            await axios.post(`${API_URL}/send-media`, formData, {
-              headers: { "Content-Type": "multipart/form-data" },
-            });
-            // Append each file message to UI
-            setMessages((prev) => [
-              ...prev,
-              {
-                from: "You",
-                body: text || f.name,
-                timestamp: Date.now() / 1000,
-                fromMe: true,
-                mediaUrl: URL.createObjectURL(f),
-                caption: text || "",
-              },
-            ]);
-          }
-          // Reset UI
-          setFiles([]);
-          setText("");
-          setUploading(false);
-          // Clear file input so user can re-select same file(s)
-          if (fileInputRef.current) {
-            fileInputRef.current.value = "";
-          }
-          return; // Stop here (don't send text twice)
+  // ----- SEND -----
+  async function send(e: React.FormEvent) {
+    e.preventDefault();
+    if (!to.trim()) return alert("Enter receiver number!");
+
+    try {
+      // MULTIPLE FILES CASE
+      if (files.length > 0) {
+        setUploading(true);
+
+        for (const f of files) {
+          const formData = new FormData();
+          formData.append("file", f);
+          formData.append("to", to);
+          formData.append("caption", text || "");
+
+          await axios.post(`${API_URL}/send-media`, formData, {
+            headers: { "Content-Type": "multipart/form-data" },
+          });
+
+          // Add to UI
+          setMessages((prev) => [
+            ...prev,
+            {
+              from: "You",
+              body: text || f.name,
+              timestamp: Date.now() / 1000,
+              fromMe: true,
+              mediaUrl: URL.createObjectURL(f),
+              mediaType: f.type,
+              caption: text || "",
+            },
+          ]);
         }
 
-        // --- TEXT ONLY CASE ---
-        await axios.post(`${API_URL}/send`, { to, message: text });
-
-        setMessages((prev) => [
-          ...prev,
-          {
-            from: "You",
-            body: text,
-            timestamp: Date.now() / 1000,
-            fromMe: true,
-          },
-        ]);
+        // Reset
+        setFiles([]);
         setText("");
-      } catch (err: any) {
         setUploading(false);
-        alert("Send failed: " + (err.response?.data || err.message));
-      }
-    }
 
-    // ✅ Time formatter moved OUTSIDE send()
-    function formatTime(t: number) {
-      return new Date(t * 1000).toLocaleTimeString();
+        if (fileInputRef.current) fileInputRef.current.value = "";
+
+        return; // Stop here (don't send text again)
+      }
+
+      // TEXT ONLY
+      await axios.post(`${API_URL}/send`, { to, message: text });
+
+      setMessages((prev) => [
+        ...prev,
+        {
+          from: "You",
+          body: text,
+          timestamp: Date.now() / 1000,
+          fromMe: true,
+        },
+      ]);
+
+      setText("");
+    } catch (err: any) {
+      setUploading(false);
+      alert("Send failed: " + (err.response?.data || err.message));
     }
+  }
+
+  // ----- TIMESTAMP FORMAT -----
+  function formatTime(t: number) {
+    return new Date(t * 1000).toLocaleTimeString();
+  }
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center justify-center p-6">
       <div className="w-full max-w-2xl bg-gray-900 rounded-2xl shadow-lg border border-gray-800 overflow-hidden">
-        {/* Header */}
+
+        {/* HEADER */}
         <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-gray-850">
           <div className="flex items-center gap-2">
             <Wifi className="text-green-400" />
-            <h1 className="text-lg font-semibold">WhatsApp Web Control</h1>
+            <h1 className="text-lg font-semibold">WhatsApp Messenger</h1>
           </div>
           {ready ? (
-            <span className="text-sm text-green-400 font-medium">Connected</span>
+            <span className="text-sm text-green-400">Connected</span>
           ) : (
             <span className="text-sm text-yellow-400">Scan QR to connect</span>
           )}
         </div>
 
-        {/* QR Screen */}
+        {/* QR SCREEN */}
         {!ready && qr && (
           <div className="flex flex-col items-center justify-center p-6">
             <p className="text-gray-400 mb-3">
-              Scan the QR with your phone (WhatsApp → Linked Devices)
+              Scan the QR using WhatsApp → Linked Devices
             </p>
-            <img
-              src={qr}
-              alt="QR Code"
-              className="w-64 h-64 border-2 border-gray-700 rounded-lg"
-            />
+            <img src={qr} className="w-64 h-64 border border-gray-700 rounded-lg" />
           </div>
         )}
 
-        {/* Main Chat Area */}
+        {/* CHAT AREA */}
         {ready && (
           <div className="flex flex-col h-[600px]">
-            {/* Messages */}
+            {/* MESSAGES */}
             <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-gray-950">
-              {messages.length === 0 ? (
+
+              {messages.length === 0 && (
                 <p className="text-center text-gray-500 text-sm mt-10">
                   No messages yet.
                 </p>
-              ) : (
-                messages.map((m, i) => (
+              )}
+
+              {messages.map((m, i) => (
+                <div
+                  key={i}
+                  className={`flex ${m.fromMe ? "justify-end" : "justify-start"}`}
+                >
                   <div
-                    key={i}
-                    className={`flex ${m.fromMe ? "justify-end" : "justify-start"}`}
+                    className={`max-w-xs p-3 rounded-lg text-sm ${
+                      m.fromMe
+                        ? "bg-green-600 text-white"
+                        : "bg-gray-800 text-gray-100"
+                    }`}
                   >
-                    <div
-                      className={`max-w-xs p-3 rounded-lg text-sm ${
-                        m.fromMe
-                          ? "bg-green-600 text-white"
-                          : "bg-gray-800 text-gray-100"
-                      }`}
-                    >
-                      
-                    {m.mediaUrl ? (
-                        <>
-                          {/* 🖼 Image */}
-                          {m.mediaUrl.match(/\.(jpg|jpeg|png|gif)$/i) && (
-                            <img
-                              src={m.mediaUrl}
-                              alt="media"
-                              className="rounded-lg mb-2 max-h-48"
-                            />
-                          )}
+                    {/* MEDIA PREVIEW */}
+                    {m.mediaUrl && (
+                      <>
+                        {getMediaCategory(m.mediaType) === "image" && (
+                          <img src={m.mediaUrl} className="max-h-48 rounded mb-2" />
+                        )}
 
-                          {/* 🎥 Video */}
-                          {m.mediaUrl.match(/\.(mp4|mov|webm)$/i) && (
-                            <video
-                              src={m.mediaUrl}
-                              controls
-                              className="rounded-lg mb-2 max-h-48"
-                            />
-                          )}
+                        {getMediaCategory(m.mediaType) === "video" && (
+                          <video
+                            src={m.mediaUrl}
+                            controls
+                            className="max-h-48 rounded mb-2"
+                          />
+                        )}
 
-                          {/* 🎧 Audio */}
-                          {m.mediaUrl.match(/\.(mp3|wav|ogg)$/i) && (
-                            <audio
-                              src={m.mediaUrl}
-                              controls
-                              className="w-full mb-2"
-                            />
-                          )}
+                        {getMediaCategory(m.mediaType) === "audio" && (
+                          <audio
+                            src={m.mediaUrl}
+                            controls
+                            className="w-full mb-2"
+                          />
+                        )}
 
-                          {/* 📄 Document / Other Files */}
-                          {!m.mediaUrl.match(
-                            /\.(jpg|jpeg|png|gif|mp4|mov|webm|mp3|wav|ogg)$/i
-                          ) && (
-                            <a
-                              href={m.mediaUrl}
-                              download={m.body || "file"}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="block text-sm bg-gray-700 text-white px-3 py-2 rounded-lg hover:bg-gray-600 transition-colors mb-2"
-                            >
-                              📄 {m.body || "Download file"}
-                            </a>
-                          )}
-                        </>
-                      ) : null}
+                        {getMediaCategory(m.mediaType) === "document" && (
+                          <a
+                            href={m.mediaUrl}
+                            download={m.body}
+                            className="block text-xs bg-gray-700 px-3 py-2 rounded-lg mb-2"
+                          >
+                            📄 {m.body}
+                          </a>
+                        )}
+                      </>
+                    )}
 
-                      <div>{m.body}</div>
-                      <div className="text-xs text-gray-300 mt-1 text-right">
-                        {m.fromMe ? "You" : m.from} • {formatTime(m.timestamp)}
-                      </div>
+                    <div>{m.body}</div>
+                    <div className="text-xs text-gray-300 mt-1 text-right">
+                      {m.fromMe ? "You" : m.from} • {formatTime(m.timestamp)}
                     </div>
                   </div>
-                ))
-              )}
+                </div>
+              ))}
+
               <div ref={messagesEndRef} />
             </div>
 
-            {/* Message Form */}
-            <form
-              onSubmit={send}
-              className="flex gap-2 p-4 border-t border-gray-800 bg-gray-900"
-            >
+            {/* SELECTED FILE PREVIEW */}
+            {files.length > 0 && (
+              <div className="p-2 bg-gray-900 border-t border-gray-800">
+                <p className="text-gray-300 text-xs">Selected files:</p>
+                {files.map((f, i) => (
+                  <div key={i} className="text-gray-400 text-xs">
+                    📎 {f.name} ({f.type || "unknown"})
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* INPUT AREA */}
+            <form onSubmit={send} className="flex gap-2 p-4 border-t border-gray-800 bg-gray-900">
               <input
                 type="text"
-                placeholder="Phone number (e.g. 919876543210)"
+                placeholder="Phone number"
                 value={to}
                 onChange={(e) => setTo(e.target.value)}
-                className="w-40 bg-gray-800 text-gray-100 p-3 rounded-lg border border-gray-700 focus:border-green-500 outline-none"
-              />
-              <input
-                type="text"
-                placeholder="Type your message..."
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                className="flex-1 bg-gray-800 text-gray-100 p-3 rounded-lg border border-gray-700 focus:border-green-500 outline-none"
+                className="w-40 bg-gray-800 p-3 rounded-lg border border-gray-700"
               />
 
-              <label className="flex items-center justify-center bg-gray-800 text-gray-200 border border-gray-700 rounded-lg px-3 cursor-pointer hover:bg-gray-700 transition-colors">
+              <input
+                type="text"
+                placeholder="Type message..."
+                value={text}
+                onChange={(e) => setText(e.target.value)}
+                className="flex-1 bg-gray-800 p-3 rounded-lg border border-gray-700"
+              />
+
+              <label className="flex items-center bg-gray-800 px-3 rounded-lg border border-gray-700 cursor-pointer hover:bg-gray-700">
                 <Upload size={18} className="mr-1" />
-                <span className="text-sm">File</span>
+                File
                 <input
-                  multiple
                   type="file"
+                  multiple
                   ref={fileInputRef}
                   hidden
                   onChange={(e) => setFiles(Array.from(e.target.files || []))}
                 />
               </label>
 
-              
               <button
                 type="submit"
                 disabled={uploading}
-                className={`${
+                className={`px-4 rounded-lg flex items-center gap-2 ${
                   uploading
-                    ? "bg-gray-500 cursor-not-allowed"
+                    ? "bg-gray-600 cursor-not-allowed"
                     : "bg-green-500 hover:bg-green-600"
-                } text-white font-medium flex items-center justify-center gap-2 px-4 rounded-lg transition-colors`}
+                }`}
               >
                 <Send size={18} />
                 {uploading ? "Sending..." : "Send"}
@@ -315,11 +312,12 @@ export default function Home() {
           </div>
         )}
 
-        {/* Footer */}
+        {/* FOOTER */}
         <div className="text-gray-500 text-xs text-center p-3 border-t border-gray-800">
           <Smartphone size={14} className="inline-block mr-1" />
           WhatsApp Web Integration © 2025
         </div>
+
       </div>
     </div>
   );
