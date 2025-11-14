@@ -23,7 +23,7 @@ export default function Home() {
   const [messages, setMessages] = useState<Message[]>([]);
   const [to, setTo] = useState("");
   const [text, setText] = useState("");
-  const [file, setFile] = useState<File | null>(null);
+  const [files, setFiles] = useState<File[]>([]);
   const [uploading, setUploading] = useState(false);
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const socketRef = useRef<Socket | null>(null);
@@ -91,47 +91,50 @@ export default function Home() {
       reader.readAsDataURL(file);
     });
   }
+    // ✅ Send text or media
+    async function send(e: React.FormEvent) {
+      e.preventDefault();
+      if (!to) return alert("Enter a recipient number");
 
-  // ✅ Send text or media
-  async function send(e: React.FormEvent) {
-    e.preventDefault();
-    if (!to) return alert("Enter a recipient number");
+      try {
+        // --- MULTIPLE FILES CASE ---
+        if (files && files.length > 0) {
+          setUploading(true);
+          for (const f of files) {
+            const formData = new FormData();
+            formData.append("file", f);
+            formData.append("to", to);
+            formData.append("caption", text || "");
+            await axios.post(`${API_URL}/send-media`, formData, {
+              headers: { "Content-Type": "multipart/form-data" },
+            });
+            // Append each file message to UI
+            setMessages((prev) => [
+              ...prev,
+              {
+                from: "You",
+                body: text || f.name,
+                timestamp: Date.now() / 1000,
+                fromMe: true,
+                mediaUrl: URL.createObjectURL(f),
+                caption: text || "",
+              },
+            ]);
+          }
+          // Reset UI
+          setFiles([]);
+          setText("");
+          setUploading(false);
+          // Clear file input so user can re-select same file(s)
+          if (fileInputRef.current) {
+            fileInputRef.current.value = "";
+          }
+          return; // Stop here (don't send text twice)
+        }
 
-    try {
-        if (file) {
-        setUploading(true);
-
-        const formData = new FormData();
-        formData.append("file", file);
-        formData.append("to", to);
-        formData.append("caption", text || "");
-
-        await axios.post(`${API_URL}/send-media`, formData, {
-          headers: { "Content-Type": "multipart/form-data" },
-        });
-
-        setMessages((prev) => [
-          ...prev,
-          {
-            from: "You",
-            body: text || file.name,
-            timestamp: Date.now() / 1000,
-            fromMe: true,
-            mediaUrl: URL.createObjectURL(file),
-            caption: text,
-          },
-        ]);
-
-        setFile(null);
-        setText("");
-        setUploading(false);
-
-      // ✅ Clear file input so same file can be re-selected
-      if (fileInputRef.current) {
-        fileInputRef.current.value = "";
-      }
-      } else {
+        // --- TEXT ONLY CASE ---
         await axios.post(`${API_URL}/send`, { to, message: text });
+
         setMessages((prev) => [
           ...prev,
           {
@@ -142,16 +145,16 @@ export default function Home() {
           },
         ]);
         setText("");
+      } catch (err: any) {
+        setUploading(false);
+        alert("Send failed: " + (err.response?.data || err.message));
       }
-    } catch (err: any) {
-      setUploading(false);
-      alert("Send failed: " + (err.response?.data || err.message));
     }
-  }
 
-  function formatTime(t: number) {
-    return new Date(t * 1000).toLocaleTimeString();
-  }
+    // ✅ Time formatter moved OUTSIDE send()
+    function formatTime(t: number) {
+      return new Date(t * 1000).toLocaleTimeString();
+    }
 
   return (
     <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center justify-center p-6">
@@ -287,10 +290,11 @@ export default function Home() {
                 <Upload size={18} className="mr-1" />
                 <span className="text-sm">File</span>
                 <input
+                  multiple
                   type="file"
                   ref={fileInputRef}
                   hidden
-                  onChange={(e) => setFile(e.target.files?.[0] || null)}
+                  onChange={(e) => setFiles(Array.from(e.target.files || []))}
                 />
               </label>
 
