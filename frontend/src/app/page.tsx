@@ -4,6 +4,7 @@ import React, { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import axios from "axios";
 import { Send, Upload, Wifi, Smartphone } from "lucide-react";
+import Link from "next/link";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL!;
@@ -309,6 +310,10 @@ export default function Home() {
                 {uploading ? "Sending..." : "Send"}
               </button>
             </form>
+            <Link href={`/chat/${to}`}>
+              <button className="bg-blue-500 px-3 py-2 rounded-lg text-white">Open Chat</button>
+            </Link>
+            
           </div>
         )}
 

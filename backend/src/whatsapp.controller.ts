@@ -1,4 +1,4 @@
-import { Controller, Get, Post, Body, HttpException, UseInterceptors, UploadedFile} from '@nestjs/common';
+import { Controller, Get, Post, Body,Query, HttpException, UseInterceptors, UploadedFile} from '@nestjs/common';
 import { WhatsappService } from './whatsapp.service';
 import { FileInterceptor } from '@nestjs/platform-express';
 import { Request } from "express";
@@ -28,6 +28,14 @@ export class WhatsappController {
   @Get('qr')
   getQr() {
     return { qr: this.wa.getQr(), ready: this.wa.isReady() };
+  }
+
+  @Get('/messages')
+  async getMessages(
+    @Query('phone') phone?: string,
+    @Query('limit') limit: number = 100
+  ) {
+    return this.wa.getMessages(phone, limit);
   }
 
   @Post('send')

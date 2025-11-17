@@ -33,15 +33,22 @@ export class WhatsappService implements OnModuleInit {
       authStrategy: new LocalAuth(),
       puppeteer: {
         headless: true,
+        executablePath: '/usr/bin/chromium',  // 👈 Arch Linux Chromium
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
+
           '--disable-dev-shm-usage',
-          '--disable-accelerated-2d-canvas',
-          '--no-first-run',
           '--no-zygote',
-          '--single-process',
-          '--disable-gpu'
+          '--no-first-run',
+          '--disable-gpu',
+          '--disable-software-rasterizer',
+          '--disable-webgl',
+          '--disable-features=VizDisplayCompositor',
+
+          '--renderer-process-limit=1',
+          '--no-default-browser-check',
+          '--disable-breakpad',
         ],
       },
     });
@@ -60,35 +67,40 @@ export class WhatsappService implements OnModuleInit {
       console.log('WhatsApp client ready');
     });
 
-    // ========= INCOMING MESSAGES ==========
-    this.client.on('message', async (msg: Message) => {
-      console.log(`📩 Incoming from ${msg.from}: ${msg.body}`);
+// ========= INCOMING / ANY ORIGIN MESSAGES ==========
+this.client.on('message', async (msg: Message) => {
+  console.log("🔥 MESSAGE EVENT FIRED", {
+    fromMe: msg.fromMe,
+    from: msg.from,
+    to: msg.to,
+    body: msg.body,
+    id: msg.id?._serialized
+  });
 
-      // Send to frontend
-      this.io.emit('message', {
-        from: msg.from,
-        body: msg.body,
-        timestamp: msg.timestamp,
-      });
+  const direction = msg.fromMe ? 'O' : 'I';
+  const msgId = msg.id?._serialized ?? `unknown-${Date.now()}`;
+  const ourId = this.client.info?.wid?._serialized ?? null;
 
-      // Save to DB
-      try {
-        await this.prisma.user_whatsapp.create({
-          data: {
-            msg_id: msg.id._serialized,
-            in_out: 'I', // Incoming
-            sender: msg.from,
-            receiver: msg.to,
-            message: msg.body || '',
-            edate: new Date(),
-          },
-        });
+  const sender = msg.author ?? (msg.fromMe ? ourId : msg.from);
+  const receiver = msg.to ?? (msg.fromMe ? msg.to ?? null : ourId);
 
-        console.log('💾 Saved incoming message to DB');
-      } catch (err) {
-        console.error('❌ DB Save Error:', err);
-      }
-    });
+  const textBody = msg.body || '';
+
+  // Save in DB
+  await this.prisma.user_whatsapp.create({
+    data: {
+      msg_id: msgId,
+      in_out: direction,
+      sender,
+      receiver,
+      message: textBody,
+      edate: new Date(),
+    }
+  });
+
+  console.log("💾 Saved message via OPTION A logic");
+});
+
 
     this.client
       .initialize()
@@ -141,6 +153,33 @@ export class WhatsappService implements OnModuleInit {
 
     return res;
   }
+  // Get messages from a specific phone number
+
+async getMessages(phone?: string, limit: number = 100) {
+  let phoneSearch = undefined;
+
+  if (phone) {
+    let p = phone.replace(/\D/g, '');
+    if (p.length === 10) p = '91' + p;
+    phoneSearch = `${p}@c.us`;
+  }
+
+  const rows = await this.prisma.user_whatsapp.findMany({
+    where: phoneSearch
+      ? {
+          OR: [{ sender: phoneSearch }, { receiver: phoneSearch }]
+        }
+      : undefined,
+    orderBy: { edate: 'asc' },
+    take: limit,
+  });
+
+  // ⭐ Convert BigInt → string here
+  return rows.map(row => ({
+    ...row,
+    whatsID: row.whatsID.toString(),
+  }));
+}
 
   // 📤 Send Media (file path, URL, base64)
   async sendMedia(to: string, mediaInput: string, caption?: string) {
