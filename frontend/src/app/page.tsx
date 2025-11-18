@@ -282,6 +282,7 @@ function mergeDbMessage(m: DbMessage) {
                 const isMe = m.in_out === "O";
                 return (
                   <div key={m.msg_id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                    
                     <div
                       className={`max-w-xs p-3 rounded-lg text-sm ${
                         isMe
@@ -289,11 +290,22 @@ function mergeDbMessage(m: DbMessage) {
                           : "bg-gray-800 text-gray-100 rounded-bl-none"
                       }`}
                     >
+
+                      {/* Message text */}
                       <div>{m.message || "(media)"}</div>
+
+                      {/* Sender info */}
+                      <div className="text-[10px] opacity-60 mt-1">
+                        {isMe ? "You" : m.sender.replace("@c.us", "")}
+                      </div>
+
+                      {/* Timestamp */}
                       <div className="text-[10px] opacity-70 mt-1 text-right">
                         {new Date(m.edate).toLocaleTimeString()}
                       </div>
+
                     </div>
+
                   </div>
                 );
               })}
