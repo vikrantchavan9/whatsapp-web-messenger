@@ -66,39 +66,79 @@ export class WhatsappService implements OnModuleInit {
       this.io.emit('ready', true);
       console.log('WhatsApp client ready');
     });
+    
+// ========= INCOMING MESSAGES ONLY ==========
+this.client.on("message", async (msg) => {
+  const ourId = this.client.info?.wid?._serialized;
 
-// ========= INCOMING / ANY ORIGIN MESSAGES ==========
-this.client.on('message', async (msg: Message) => {
-  console.log("🔥 MESSAGE EVENT FIRED", {
-    fromMe: msg.fromMe,
-    from: msg.from,
-    to: msg.to,
-    body: msg.body,
-    id: msg.id?._serialized
+  // True outgoing conditions
+  const isFromMe =
+    msg.fromMe ||
+    msg.from === ourId ||
+    msg.author === ourId;
+
+    console.log(isFromMe,"const isFromMe initiated // incoming only");
+
+  if (isFromMe) return;  // ⬅️ STOP all outgoing duplication
+
+  const direction = "I";
+
+  this.io.emit("message", {
+    msg_id: msg.id._serialized,
+    in_out: "I",
+    sender: msg.from,
+    receiver: msg.to || ourId,
+    message: msg.body || "",
+    edate: new Date().toISOString(),
   });
 
-  const direction = msg.fromMe ? 'O' : 'I';
-  const msgId = msg.id?._serialized ?? `unknown-${Date.now()}`;
-  const ourId = this.client.info?.wid?._serialized ?? null;
+  console.log(`message emitted from message client ${msg.body} // incoming only`)
 
-  const sender = msg.author ?? (msg.fromMe ? ourId : msg.from);
-  const receiver = msg.to ?? (msg.fromMe ? msg.to ?? null : ourId);
-
-  const textBody = msg.body || '';
-
-  // Save in DB
   await this.prisma.user_whatsapp.create({
     data: {
-      msg_id: msgId,
-      in_out: direction,
-      sender,
-      receiver,
-      message: textBody,
+      msg_id: msg.id._serialized,
+      in_out: "I",
+      sender: msg.from,
+      receiver: msg.to || ourId,
+      message: msg.body || "",
       edate: new Date(),
-    }
+    },
+  });
+  console.log(`message saved to db via message client: ${msg.body} // incoming only`);
+});
+
+// ========= OUTGOING MESSAGES ONLY ==========
+this.client.on("message_create", async (msg) => {
+  const ourId = this.client.info?.wid?._serialized;
+
+  const isOutgoing = msg.fromMe || msg.from === ourId;
+  // console.log(isOutgoing,"const isOutgoing initiated // outgoing only");
+
+  if (!isOutgoing) return;  // ⬅️ FIX: prevents duplicate incoming
+
+  // outgoing only
+  this.io.emit("message", {
+    msg_id: msg.id._serialized,
+    in_out: "O",
+    sender: msg.from,
+    receiver: msg.to,
+    message: msg.body || "",
+    edate: new Date().toISOString(),
   });
 
-  console.log("💾 Saved message via OPTION A logic");
+  console.log(`message_create client // message emitted: ${msg.body} // outgoing only`)
+
+  await this.prisma.user_whatsapp.create({
+    data: {
+      msg_id: msg.id._serialized,
+      in_out: "O",
+      sender: msg.from,
+      receiver: msg.to,
+      message: msg.body || "",
+      edate: new Date(),
+    },
+  });
+    console.log(`message_create client // message saved to db: ${msg.body} // outgoing only`);
 });
 
 
@@ -115,44 +155,36 @@ this.client.on('message', async (msg: Message) => {
   async sendMessage(to: string, message: string) {
     if (!this.ready) throw new Error('Client not ready');
 
-    // 🧩 Clean and normalize number
     let phone = to.replace(/\D/g, ''); // remove all non-digits
-
-    // If number has only 10 digits (no country code), assume +91 (India)
-    if (phone.length === 10) {
-      phone = '91' + phone;
-    }
-
-    // If number starts with a +, remove it
-    if (phone.startsWith('+')) {
-      phone = phone.substring(1);
-    }
+    if (phone.length === 10) phone = '91' + phone; // If number has only 10 digits (no country code), assume +91 (India)
+    if (phone.startsWith('+')) phone = phone.substring(1); // If number starts with a +, remove it
 
     // Construct JID
     const jid = `${phone}@c.us`;
-    console.log(`📨 Sending to ${jid}: ${message}`);
+    console.log(`async sendMessage // 📨 Sending to ${jid}: ${message}`);
     const res = await this.client.sendMessage(jid, message);
 
-    // Save outgoing message
-    try {
-      await this.prisma.user_whatsapp.create({
-        data: {
-          msg_id: res.id._serialized,
-          in_out: 'O',
-          sender: this.client.info.wid._serialized,
-          receiver: jid,
-          message: message,
-          edate: new Date(),
-        },
-      });
+        // Save outgoing message
+    // try {
+    //   await this.prisma.user_whatsapp.create({
+    //     data: {
+    //       msg_id: res.id._serialized,
+    //       in_out: 'O',
+    //       sender: this.client.info.wid._serialized,
+    //       receiver: jid,
+    //       message: message,
+    //       edate: new Date(),
+    //     },
+    //   });
 
-      console.log('💾 Saved outgoing message to DB');
-    } catch (err) {
-      console.error('❌ DB Save Error:', err);
-    }
+    //   console.log(`async sendMessage // message:${message} saved to db`);
+    // } catch (err) {
+    //   console.error('❌ DB Save Error:', err);
+    // }
 
     return res;
   }
+
   // Get messages from a specific phone number
 
 async getMessages(phone?: string, limit: number = 100) {

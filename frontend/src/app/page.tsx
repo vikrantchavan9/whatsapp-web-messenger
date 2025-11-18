@@ -4,25 +4,36 @@ import React, { useEffect, useState, useRef } from "react";
 import { io, Socket } from "socket.io-client";
 import axios from "axios";
 import { Send, Upload, Wifi, Smartphone } from "lucide-react";
-import Link from "next/link";
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL!;
 const SOCKET_URL = process.env.NEXT_PUBLIC_SOCKET_URL!;
 
-interface Message {
-  from: string;
-  body: string;
-  timestamp: number;
-  fromMe?: boolean;
-  mediaUrl?: string;
-  mediaType?: string;
-  caption?: string;
+// ------------------ TYPES ------------------
+interface DbMessage {
+  whatsID: string;
+  msg_id: string;
+  in_out: "I" | "O";
+  sender: string;
+  receiver: string;
+  message: string | null;
+  edate: string; // ISO
 }
+
+interface LiveIncoming {
+  msg_id?: string;
+  in_out?: "I" | "O";
+  sender?: string;
+  receiver?: string;
+  message?: string;
+  edate?: string;
+}
+// -----------------------------------------------------
 
 export default function Home() {
   const [qr, setQr] = useState<string | null>(null);
   const [ready, setReady] = useState(false);
-  const [messages, setMessages] = useState<Message[]>([]);
+
+  const [history, setHistory] = useState<DbMessage[]>([]);
   const [to, setTo] = useState("");
   const [text, setText] = useState("");
   const [files, setFiles] = useState<File[]>([]);
@@ -32,135 +43,211 @@ export default function Home() {
   const messagesEndRef = useRef<HTMLDivElement | null>(null);
   const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  // ----- SOCKET.IO CONNECTION -----
+  // -------- MERGE HELPERS --------
+
+function mergeDbMessage(m: DbMessage) {
+  setHistory((prev) => {
+    let list = [...prev];
+
+    // 1. Remove any local temp messages for same receiver & message
+      list = list.filter((x) =>
+        !(
+          x.msg_id.startsWith("local-") &&
+          x.in_out === "O" &&
+          x.message === m.message // same body
+        )
+      );
+    // 2. Replace or insert real message
+    const exists = list.findIndex((x) => x.msg_id === m.msg_id);
+
+    if (exists !== -1) {
+      list[exists] = m;
+    } else {
+      list.push(m);
+    }
+
+    list.sort((a, b) => new Date(a.edate).getTime() - new Date(b.edate).getTime());
+    return list;
+  });
+}
+
+  async function loadHistory() {
+    try {
+      const res = await axios.get(`${API_URL}/messages`);
+      let rows: DbMessage[] = res.data;
+
+      // ⭐ Remove duplicates by msg_id BEFORE setting state
+      rows = rows.filter(
+      (msg, index, self) =>
+        index === self.findIndex((m) => m.msg_id === msg.msg_id)
+    );
+
+      rows.sort((a, b) => new Date(a.edate).getTime() - new Date(b.edate).getTime());
+      setHistory(rows);
+    } catch (err) {
+      console.error("History load error:", err);
+    }
+  }
+
+  // -------- SOCKET INIT & CLEANUP --------
+
   useEffect(() => {
-    const socket: Socket = io(SOCKET_URL, { transports: ["websocket"] });
+    const socket: Socket = io(SOCKET_URL, {
+      transports: ["websocket"],
+      reconnectionAttempts: 5,
+      timeout: 20000,
+    });
+
     socketRef.current = socket;
 
     console.log("🔌 Connecting to socket:", SOCKET_URL);
 
+    socket.on("connect", () => {
+      console.log("🟢 Socket connected:", socket.id);
+    });
+
+    socket.on("connect_error", (err) => {
+      console.error("❌ connect_error:", err);
+    });
+
+    socket.on("error", (err) => {
+      console.error("❌ socket error:", err);
+    });
+
+    socket.on("reconnect_attempt", (n) => {
+      console.log("🔁 reconnect attempt:", n);
+    });
+
+    // QR received
     socket.on("qr", (qrData: string) => {
-      console.log("📸 QR Received");
+      console.log("📸 QR received");
       setQr(qrData);
     });
 
+    // Ready
     socket.on("ready", () => {
       console.log("✅ WhatsApp ready");
       setReady(true);
       setQr(null);
+      loadHistory();
     });
 
-    socket.on("message", (msg: Message) => {
-      console.log("📩 Incoming:", msg);
-      setMessages((prev) => [...prev, { ...msg, fromMe: false }]);
+    // Incoming / outgoing real-time message
+    socket.on("message", (raw: LiveIncoming) => {
+      console.log("📩 Live message event:", raw);
+
+      if (!raw.msg_id) return;
+
+      const entry: DbMessage = {
+        whatsID: raw.msg_id,
+        msg_id: raw.msg_id,
+        in_out: raw.in_out === "O" ? "O" : "I",
+        sender: raw.sender || "",
+        receiver: raw.receiver || "",
+        message: raw.message || "",
+        edate: raw.edate || new Date().toISOString(),
+      };
+
+      mergeDbMessage(entry);
     });
 
-    socket.on("disconnect", () => console.log("❌ Disconnected"));
+    socket.on("disconnect", (reason) => {
+      console.log("🔴 socket disconnected:", reason);
+      setReady(false);
+    });
 
-    // Fetch QR state once on load
+    // Initial QR check
     (async () => {
       try {
         const res = await axios.get(`${API_URL}/qr`);
         if (res.data.qr) setQr(res.data.qr);
-        if (res.data.ready) setReady(true);
+        if (res.data.ready) {
+          setReady(true);
+          loadHistory();
+        }
       } catch (err) {
-        console.error("QR fetch error:", err);
+        console.error("Initial QR fetch error:", err);
       }
     })();
 
+    // Cleanup
     return () => {
-      socket.disconnect();
-      console.log("🧹 Socket disconnected");
+      console.log("🧹 Cleaning up socket");
+
+      socket.off("connect");
+      socket.off("connect_error");
+      socket.off("error");
+      socket.off("reconnect_attempt");
+      socket.off("qr");
+      socket.off("ready");
+      socket.off("message");
+      socket.off("disconnect");
+
+      try {
+        socket.disconnect();
+      } catch {}
+      socketRef.current = null;
     };
   }, []);
 
-  // Auto scroll
+  // Auto-scroll bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: "smooth" });
-  }, [messages]);
+  }, [history]);
 
-  // ----- MEDIA CATEGORY (MIME BASED) -----
-  function getMediaCategory(type: string | undefined) {
-    if (!type) return "other";
-    if (type.startsWith("image/")) return "image";
-    if (type.startsWith("video/")) return "video";
-    if (type.startsWith("audio/")) return "audio";
-    return "document"; // pdf, docs, zip...
-  }
+  // ------------ SENDING --------------
 
-  // ----- SEND -----
   async function send(e: React.FormEvent) {
     e.preventDefault();
-    if (!to.trim()) return alert("Enter receiver number!");
+    if (!to.trim()) return alert("Enter phone number!");
 
     try {
-      // MULTIPLE FILES CASE
       if (files.length > 0) {
         setUploading(true);
-
         for (const f of files) {
-          const formData = new FormData();
-          formData.append("file", f);
-          formData.append("to", to);
-          formData.append("caption", text || "");
+          const fd = new FormData();
+          fd.append("file", f);
+          fd.append("to", to);
+          fd.append("caption", text || "");
 
-          await axios.post(`${API_URL}/send-media`, formData, {
+          await axios.post(`${API_URL}/send-media`, fd, {
             headers: { "Content-Type": "multipart/form-data" },
           });
 
-          // Add to UI
-          setMessages((prev) => [
-            ...prev,
-            {
-              from: "You",
-              body: text || f.name,
-              timestamp: Date.now() / 1000,
-              fromMe: true,
-              mediaUrl: URL.createObjectURL(f),
-              mediaType: f.type,
-              caption: text || "",
-            },
-          ]);
+          const tempId = `local-${Date.now()}`;
+          mergeDbMessage({
+            whatsID: tempId,
+            msg_id: tempId,
+            in_out: "O",
+            sender: "me",
+            receiver: to,
+            message: text || f.name,
+            edate: new Date().toISOString(),
+          });
         }
 
-        // Reset
         setFiles([]);
-        setText("");
         setUploading(false);
-
+        setText("");
         if (fileInputRef.current) fileInputRef.current.value = "";
-
-        return; // Stop here (don't send text again)
+        return;
       }
 
-      // TEXT ONLY
+      // Send normal text
       await axios.post(`${API_URL}/send`, { to, message: text });
-
-      setMessages((prev) => [
-        ...prev,
-        {
-          from: "You",
-          body: text,
-          timestamp: Date.now() / 1000,
-          fromMe: true,
-        },
-      ]);
 
       setText("");
     } catch (err: any) {
-      setUploading(false);
-      alert("Send failed: " + (err.response?.data || err.message));
+      console.error("Send error:", err);
+      alert("Send failed: " + err.message);
     }
   }
 
-  // ----- TIMESTAMP FORMAT -----
-  function formatTime(t: number) {
-    return new Date(t * 1000).toLocaleTimeString();
-  }
+  // ------------ UI RENDER ------------
 
   return (
-    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center justify-center p-6">
-      <div className="w-full max-w-2xl bg-gray-900 rounded-2xl shadow-lg border border-gray-800 overflow-hidden">
+    <div className="min-h-screen bg-gray-950 text-gray-100 flex flex-col items-center p-6">
+      <div className="w-full max-w-3xl bg-gray-900 rounded-2xl shadow-lg border border-gray-800 overflow-hidden">
 
         {/* HEADER */}
         <div className="flex items-center justify-between p-4 border-b border-gray-800 bg-gray-850">
@@ -168,106 +255,52 @@ export default function Home() {
             <Wifi className="text-green-400" />
             <h1 className="text-lg font-semibold">WhatsApp Messenger</h1>
           </div>
-          {ready ? (
-            <span className="text-sm text-green-400">Connected</span>
-          ) : (
-            <span className="text-sm text-yellow-400">Scan QR to connect</span>
-          )}
+          <span className={`text-sm ${ready ? "text-green-400" : "text-yellow-400"}`}>
+            {ready ? "Connected" : "Scan QR"}
+          </span>
         </div>
 
-        {/* QR SCREEN */}
+        {/* QR */}
         {!ready && qr && (
           <div className="flex flex-col items-center justify-center p-6">
-            <p className="text-gray-400 mb-3">
-              Scan the QR using WhatsApp → Linked Devices
-            </p>
+            <p className="text-gray-400 mb-3">Scan QR from WhatsApp → Linked Devices</p>
             <img src={qr} className="w-64 h-64 border border-gray-700 rounded-lg" />
           </div>
         )}
 
-        {/* CHAT AREA */}
+        {/* CHAT */}
         {ready && (
           <div className="flex flex-col h-[600px]">
-            {/* MESSAGES */}
-            <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-gray-950">
 
-              {messages.length === 0 && (
-                <p className="text-center text-gray-500 text-sm mt-10">
-                  No messages yet.
-                </p>
+            {/* HISTORY (newest at bottom) */}
+            <div className="flex-1 overflow-y-auto p-4 space-y-2 bg-gray-950">
+              {history.length === 0 && (
+                <p className="text-center text-gray-500 text-sm mt-10">No messages yet.</p>
               )}
 
-              {messages.map((m, i) => (
-                <div
-                  key={i}
-                  className={`flex ${m.fromMe ? "justify-end" : "justify-start"}`}
-                >
-                  <div
-                    className={`max-w-xs p-3 rounded-lg text-sm ${
-                      m.fromMe
-                        ? "bg-green-600 text-white"
-                        : "bg-gray-800 text-gray-100"
-                    }`}
-                  >
-                    {/* MEDIA PREVIEW */}
-                    {m.mediaUrl && (
-                      <>
-                        {getMediaCategory(m.mediaType) === "image" && (
-                          <img src={m.mediaUrl} className="max-h-48 rounded mb-2" />
-                        )}
-
-                        {getMediaCategory(m.mediaType) === "video" && (
-                          <video
-                            src={m.mediaUrl}
-                            controls
-                            className="max-h-48 rounded mb-2"
-                          />
-                        )}
-
-                        {getMediaCategory(m.mediaType) === "audio" && (
-                          <audio
-                            src={m.mediaUrl}
-                            controls
-                            className="w-full mb-2"
-                          />
-                        )}
-
-                        {getMediaCategory(m.mediaType) === "document" && (
-                          <a
-                            href={m.mediaUrl}
-                            download={m.body}
-                            className="block text-xs bg-gray-700 px-3 py-2 rounded-lg mb-2"
-                          >
-                            📄 {m.body}
-                          </a>
-                        )}
-                      </>
-                    )}
-
-                    <div>{m.body}</div>
-                    <div className="text-xs text-gray-300 mt-1 text-right">
-                      {m.fromMe ? "You" : m.from} • {formatTime(m.timestamp)}
+              {history.map((m) => {
+                const isMe = m.in_out === "O";
+                return (
+                  <div key={m.msg_id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
+                    <div
+                      className={`max-w-xs p-3 rounded-lg text-sm ${
+                        isMe
+                          ? "bg-green-600 text-white rounded-br-none"
+                          : "bg-gray-800 text-gray-100 rounded-bl-none"
+                      }`}
+                    >
+                      <div>{m.message || "(media)"}</div>
+                      <div className="text-[10px] opacity-70 mt-1 text-right">
+                        {new Date(m.edate).toLocaleTimeString()}
+                      </div>
                     </div>
                   </div>
-                </div>
-              ))}
-
+                );
+              })}
               <div ref={messagesEndRef} />
             </div>
 
-            {/* SELECTED FILE PREVIEW */}
-            {files.length > 0 && (
-              <div className="p-2 bg-gray-900 border-t border-gray-800">
-                <p className="text-gray-300 text-xs">Selected files:</p>
-                {files.map((f, i) => (
-                  <div key={i} className="text-gray-400 text-xs">
-                    📎 {f.name} ({f.type || "unknown"})
-                  </div>
-                ))}
-              </div>
-            )}
-
-            {/* INPUT AREA */}
+            {/* SEND BOX */}
             <form onSubmit={send} className="flex gap-2 p-4 border-t border-gray-800 bg-gray-900">
               <input
                 type="text"
@@ -301,28 +334,21 @@ export default function Home() {
                 type="submit"
                 disabled={uploading}
                 className={`px-4 rounded-lg flex items-center gap-2 ${
-                  uploading
-                    ? "bg-gray-600 cursor-not-allowed"
-                    : "bg-green-500 hover:bg-green-600"
+                  uploading ? "bg-gray-600 cursor-not-allowed" : "bg-green-500 hover:bg-green-600"
                 }`}
               >
                 <Send size={18} />
                 {uploading ? "Sending..." : "Send"}
               </button>
             </form>
-            <Link href={`/chat/${to}`}>
-              <button className="bg-blue-500 px-3 py-2 rounded-lg text-white">Open Chat</button>
-            </Link>
-            
           </div>
         )}
 
         {/* FOOTER */}
         <div className="text-gray-500 text-xs text-center p-3 border-t border-gray-800">
           <Smartphone size={14} className="inline-block mr-1" />
-          WhatsApp Web Integration © 2025
+          WhatsApp Messenger © 2025
         </div>
-
       </div>
     </div>
   );
