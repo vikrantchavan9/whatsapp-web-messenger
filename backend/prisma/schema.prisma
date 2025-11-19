@@ -9,11 +9,13 @@ datasource db {
 
 model user_whatsapp {
   whatsID  BigInt   @id @default(autoincrement())
-  msg_id   String
+  msg_id   String   @unique
   in_out   String
   sender   String?
   receiver String?
   message  String?
+  attachment_path   String?
+  attachment_type  String?
   edate    DateTime @default(now())
 }
 

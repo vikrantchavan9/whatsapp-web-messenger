@@ -16,6 +16,7 @@ interface DbMessage {
   sender: string;
   receiver: string;
   message: string | null;
+  attachment_url?: string | null;
   edate: string; // ISO
 }
 
@@ -280,31 +281,53 @@ function mergeDbMessage(m: DbMessage) {
 
               {history.map((m) => {
                 const isMe = m.in_out === "O";
+                const fileUrl = m.attachment_url ? `${API_URL}/${m.attachment_url}` : null;
+
+                const isImage =
+                  fileUrl && /\.(jpg|jpeg|png|gif|webp)$/i.test(fileUrl);
+
                 return (
                   <div key={m.msg_id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                    
                     <div
-                      className={`max-w-xs p-3 rounded-lg text-sm ${
-                        isMe
-                          ? "bg-green-600 text-white rounded-br-none"
-                          : "bg-gray-800 text-gray-100 rounded-bl-none"
-                      }`}
-                    >
+                          className={`max-w-xs p-3 rounded-lg text-sm ${
+                            isMe
+                              ? "bg-green-600 text-white rounded-br-none"
+                              : "bg-gray-800 text-gray-100 rounded-bl-none"
+                          }`}
+                        >
 
-                      {/* Message text */}
-                      <div>{m.message || "(media)"}</div>
+                          {/* IMAGE PREVIEW */}
+                          {m.attachment_url && /\.(jpg|jpeg|png|gif|webp)$/i.test(m.attachment_url) && (
+                            <img
+                              src={m.attachment_url}
+                              className="w-full rounded mb-2 border border-gray-700"
+                            />
+                          )}
 
-                      {/* Sender info */}
-                      <div className="text-[10px] opacity-60 mt-1">
-                        {isMe ? "You" : m.sender.replace("@c.us", "")}
-                      </div>
+                          {/* FILE DOWNLOAD */}
+                          {m.attachment_url && !/\.(jpg|jpeg|png|gif|webp)$/i.test(m.attachment_url) && (
+                            <a
+                              href={m.attachment_url}
+                              download
+                              className="mb-2 inline-block bg-black/20 border px-2 py-1 rounded"
+                            >
+                              ⬇ Download Attachment
+                            </a>
+                          )}
 
-                      {/* Timestamp */}
-                      <div className="text-[10px] opacity-70 mt-1 text-right">
-                        {new Date(m.edate).toLocaleTimeString()}
-                      </div>
+                          {/* CAPTION OR MESSAGE */}
+                          {m.message && <div className="mb-1">{m.message}</div>}
 
-                    </div>
+                          {/* Sender */}
+                          <div className="text-[10px] opacity-60 mt-1">
+                            {isMe ? "You" : m.sender.replace("@c.us", "")}
+                          </div>
+
+                          {/* Time */}
+                          <div className="text-[10px] opacity-70 mt-1 text-right">
+                            {new Date(m.edate).toLocaleTimeString()}
+                          </div>
+                        </div>
 
                   </div>
                 );

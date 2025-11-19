@@ -114,7 +114,13 @@ this.client.on("message_create", async (msg) => {
   const isOutgoing = msg.fromMe || msg.from === ourId;
   // console.log(isOutgoing,"const isOutgoing initiated // outgoing only");
 
-  if (!isOutgoing) return;  // ⬅️ FIX: prevents duplicate incoming
+  if (!isOutgoing) return; 
+  
+    // Skip media, because sendMedia() already saved it
+  if (msg.hasMedia) {
+    console.log("⏩ Skipping DB save from message_create for media");
+    return;
+  }// ⬅️ FIX: prevents duplicate incoming
 
   // outgoing only
   this.io.emit("message", {
@@ -164,24 +170,6 @@ this.client.on("message_create", async (msg) => {
     console.log(`async sendMessage // 📨 Sending to ${jid}: ${message}`);
     const res = await this.client.sendMessage(jid, message);
 
-        // Save outgoing message
-    // try {
-    //   await this.prisma.user_whatsapp.create({
-    //     data: {
-    //       msg_id: res.id._serialized,
-    //       in_out: 'O',
-    //       sender: this.client.info.wid._serialized,
-    //       receiver: jid,
-    //       message: message,
-    //       edate: new Date(),
-    //     },
-    //   });
-
-    //   console.log(`async sendMessage // message:${message} saved to db`);
-    // } catch (err) {
-    //   console.error('❌ DB Save Error:', err);
-    // }
-
     return res;
   }
 
@@ -213,59 +201,56 @@ async getMessages(phone?: string, limit: number = 100) {
   }));
 }
 
-  // 📤 Send Media (file path, URL, base64)
-  async sendMedia(to: string, mediaInput: string, caption?: string) {
-    if (!this.ready) throw new Error("WhatsApp client not ready");
+    // 📤 Send Media (file path, URL, base64)
+    async sendMedia(
+      to: string,
+      filePath: string,
+      caption?: string,
+      fileUrl?: string
+    ){
+      if (!this.ready) throw new Error("WhatsApp client not ready");
 
-    let phone = to.replace(/\D/g, "");
-    if (phone.length === 10) phone = "91" + phone;
-    if (phone.startsWith("+")) phone = phone.substring(1);
+      let phone = to.replace(/\D/g, "");
+      if (phone.length === 10) phone = "91" + phone;
+      if (phone.startsWith("+")) phone = phone.substring(1);
 
-    const jid = `${phone}@c.us`;
-    console.log(`📤 Sending media to ${jid}`);
+      const jid = `${phone}@c.us`;
+      console.log(`📤 Sending media to ${jid}`);
 
-    let media: MessageMedia;
+      // Load file as MessageMedia
+    const absolutePath = path.resolve(filePath);
+    const mimeType = mime.lookup(absolutePath) || "application/octet-stream";
+    const fileData = fs.readFileSync(absolutePath, { encoding: "base64" });
+    const filename = path.basename(absolutePath);
 
-    // 1️⃣ From file path
-    if (fs.existsSync(mediaInput)) {
-      const absolutePath = path.resolve(mediaInput);
-      const mimeType = mime.lookup(absolutePath) || "application/octet-stream";
-      const fileData = fs.readFileSync(absolutePath, { encoding: "base64" });
-      const filename = path.basename(absolutePath);
-      media = new MessageMedia(mimeType, fileData, filename);
-      console.log(`📁 Loaded local file: ${absolutePath}`);
-    }
+    const media = new MessageMedia(mimeType, fileData, filename);
 
-    // 2️⃣ From URL
-    else if (mediaInput.startsWith("http://") || mediaInput.startsWith("https://")) {
-      console.log(`🌐 Fetching media from URL: ${mediaInput}`);
-      const response = await axios.get(mediaInput, { responseType: "arraybuffer" });
-      const mimeType = response.headers["content-type"] || "application/octet-stream";
-      const fileData = Buffer.from(response.data).toString("base64");
-      const filename = path.basename(new URL(mediaInput).pathname) || "media";
-      media = new MessageMedia(mimeType, fileData, filename);
-    }
-
-    // 3️⃣ From base64
-    else if (mediaInput.startsWith("data:")) {
-      console.log(`🧬 Using base64 media input`);
-      const matches = mediaInput.match(/^data:(.+);base64,(.*)$/);
-      if (!matches) throw new Error("Invalid base64 data URI format");
-      const mimeType = matches[1];
-      const fileData = matches[2];
-      const filename = "file." + (mime.extension(mimeType) || "bin");
-      media = new MessageMedia(mimeType, fileData, filename);
-    }
-
-    else {
-      throw new Error("Invalid media input: must be a file path, URL, or base64 string");
-    }
-
-    // ✅ Send the media
+    // Send via WhatsApp
     const result = await this.client.sendMessage(jid, media, { caption });
-    console.log("✅ Media sent successfully");
-    return result;
+
+    console.log("📨 WA Media sent successfully");
+
+      // Save OUTGOING media message to DB
+        try {
+          await this.prisma.user_whatsapp.create({
+            data: {
+              msg_id: result.id._serialized,
+              in_out: "O",
+              sender: this.client.info.wid._serialized,
+              receiver: jid,   
+              message: caption || null, // Caption text (optional) 
+              attachment_path: fileUrl || null, // File URL (public)  
+              attachment_type: mimeType, // Mime type (image/png, audio/mpeg, application/pdf, etc)
+              edate: new Date(),
+            },
+          });
+
+          console.log(`💾 Media saved to DB: ${fileUrl || filename}`);
+        } catch (err) {
+          console.error("❌ DB Save Error (media):", err);
+        }
+
+  return result;
+  
+    }
   }
-
-
-}

@@ -64,6 +64,10 @@ export class WhatsappController {
     @UploadedFile() file: Express.Multer.File,
     @Body() body
   ) {
+    if (!file) {
+      throw new HttpException("No file uploaded", 400);
+    }
+
     console.log("Uploaded file received:", file); // DEBUG
 
     if (!file) {
@@ -74,10 +78,20 @@ export class WhatsappController {
     if (!to) throw new HttpException("Missing recipient number", 400);
 
     const filePath = path.resolve(file.path);
-    console.log("Resolved file path:", filePath);
+    const relativePath = `uploads/${file.filename}`;
+
+    console.log(" >>> FILE URL GENERATED:", relativePath);
+      console.log(" >>> CALLING sendMedia WITH:", {
+        to,
+        filePath,
+        caption,
+        relativePath
+      });
+
+    console.log("caption:", caption, "Uploaded:", filePath, "URL:", relativePath);
 
     try {
-      const res = await this.wa.sendMedia(to, filePath, caption);
+      const res = await this.wa.sendMedia(to, filePath, caption, relativePath);
       return { ok: true, res };
     } catch (err) {
       console.error("❌ Media send error:", err);
