@@ -1,13 +1,12 @@
 import { Injectable, OnModuleInit } from '@nestjs/common';
-import { Client, LocalAuth, Message, MessageMedia } from 'whatsapp-web.js';
+import { Client, LocalAuth, MessageMedia } from 'whatsapp-web.js';
 import qrcode from 'qrcode';
 import { Server as IOServer } from 'socket.io';
 import * as http from 'http';
 import fs from "fs";
 import path from "path";
-import axios from "axios";
 import mime from "mime-types";
-import { PrismaService } from '../src/prisma.service';
+import { PostgresService } from './postgres.service';
 
 @Injectable()
 export class WhatsappService implements OnModuleInit {
@@ -16,208 +15,226 @@ export class WhatsappService implements OnModuleInit {
   private qrDataUrl: string | null = null;
   private ready = false;
 
-  constructor(private prisma: PrismaService) { }
+  constructor(private db: PostgresService) {}
 
   onModuleInit() {
     this.initClient();
   }
 
   initClient() {
-
-    // Initialize Socket.IO server
+    // SOCKET SERVER
     const httpServer = http.createServer();
     this.io = new IOServer(httpServer, { cors: { origin: '*' } });
-    httpServer.listen(5000, () => console.log('Socket.IO server at :5000'));
+    httpServer.listen(5000, () => console.log('Socket.IO server @5000'));
 
     this.client = new Client({
       authStrategy: new LocalAuth(),
       puppeteer: {
         headless: true,
-        executablePath: '/usr/bin/chromium',  // 👈 Arch Linux Chromium
+        executablePath: '/usr/bin/chromium',
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',
-
           '--disable-dev-shm-usage',
-          '--no-zygote',
           '--no-first-run',
-          '--disable-gpu',
-          '--disable-software-rasterizer',
-          '--disable-webgl',
-          '--disable-features=VizDisplayCompositor',
-
-          '--renderer-process-limit=1',
-          '--no-default-browser-check',
-          '--disable-breakpad',
-        ],
-      },
+          '--no-gpu'
+        ]
+      }
     });
 
-    // qr code generation
-    this.client.on('qr', async (qr) => {
+    // QR
+    this.client.on('qr', async qr => {
       this.qrDataUrl = await qrcode.toDataURL(qr);
       this.io.emit('qr', this.qrDataUrl);
-      console.log('QR received');
     });
 
-    // client is ready
+    // READY
     this.client.on('ready', () => {
       this.ready = true;
       this.io.emit('ready', true);
       console.log('WhatsApp client ready');
     });
-    
-// ========= INCOMING MESSAGES ONLY ==========
-this.client.on("message", async (msg) => {
-  const ourId = this.client.info?.wid?._serialized;
 
-  // True outgoing conditions
-  const isFromMe =
-    msg.fromMe ||
-    msg.from === ourId ||
-    msg.author === ourId;
+    // ===============================
+    //  INCOMING MESSAGES
+    // ===============================
+    this.client.on("message", async (msg) => {
+      const ourId = this.client.info?.wid?._serialized;
 
-    console.log(isFromMe,"const isFromMe initiated // incoming only");
+      const isFromMe = msg.fromMe || msg.from === ourId || msg.author === ourId;
+      if (isFromMe) return; // ignore outgoing duplicates
 
-  if (isFromMe) return;  // ⬅️ STOP all outgoing duplication
+      let msgText = msg.body || "";
+      let attachment_name = null;
+      let attachment_path = null;
+      let attachment_type = null;
 
-  const direction = "I";
+      if (msg.hasMedia) {
+        try {
+          const media = await msg.downloadMedia();
+          if (media) {
+            const buffer = Buffer.from(media.data, "base64");
+            const ext = mime.extension(media.mimetype) || "bin";
+            attachment_name = `incoming-${Date.now()}.${ext}`;
+            const savePath = path.join("uploads", attachment_name);
+            fs.writeFileSync(savePath, buffer);
 
-  this.io.emit("message", {
-    msg_id: msg.id._serialized,
-    in_out: "I",
-    sender: msg.from,
-    receiver: msg.to || ourId,
-    message: msg.body || "",
-    edate: new Date().toISOString(),
-  });
+            attachment_path = savePath;
+            attachment_type = media.mimetype;
+            msgText = msg.body || "";
+          }
+        } catch (err) {
+          console.error("MEDIA DOWNLOAD ERROR:", err);
+        }
+      }
 
-  console.log(`message emitted from message client ${msg.body} // incoming only`)
+      // EMIT TO FRONTEND
+      this.io.emit("message", {
+        msg_id: msg.id._serialized,
+        in_out: "I",
+        sender: msg.from,
+        receiver: msg.to || ourId,
+        message: msg.body || "",
+        attachment_url: attachment_path,
+        attachment_name,
+        attachment_type,
+        edate: new Date().toISOString(),
+      });
 
-  await this.prisma.user_whatsapp.create({
-    data: {
-      msg_id: msg.id._serialized,
-      in_out: "I",
-      sender: msg.from,
-      receiver: msg.to || ourId,
-      message: msg.body || "",
-      edate: new Date(),
-    },
-  });
-  console.log(`message saved to db via message client: ${msg.body} // incoming only`);
-});
+      // SAVE TO DB
+      await this.db.query(
+        `INSERT INTO user_whatsapp 
+          (msg_id, in_out, sender, receiver, message, attachment_name, attachment_path, attachment_type, edate)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+        [
+          msg.id._serialized,
+          "I",
+          msg.from,
+          msg.to || ourId,
+          msg.body || "",
+          attachment_name,
+          attachment_path,
+          attachment_type,
+          new Date()
+        ]
+      );
 
-// ========= OUTGOING MESSAGES ONLY ==========
-this.client.on("message_create", async (msg) => {
-  const ourId = this.client.info?.wid?._serialized;
+      console.log("Incoming saved:", msg.body);
+    });
 
-  const isOutgoing = msg.fromMe || msg.from === ourId;
-  // console.log(isOutgoing,"const isOutgoing initiated // outgoing only");
+    // ===============================
+    //  OUTGOING MESSAGES
+    // ===============================
+    this.client.on("message_create", async (msg) => {
+      const ourId = this.client.info?.wid?._serialized;
+      const isOutgoing = msg.fromMe || msg.from === ourId;
+      if (!isOutgoing) return;
 
-  if (!isOutgoing) return; 
-  
-    // Skip media, because sendMedia() already saved it
-  if (msg.hasMedia) {
-    console.log("⏩ Skipping DB save from message_create for media");
-    return;
-  }// ⬅️ FIX: prevents duplicate incoming
+      if (msg.hasMedia) return; // media messages handled separately
 
-  // outgoing only
-  this.io.emit("message", {
-    msg_id: msg.id._serialized,
-    in_out: "O",
-    sender: msg.from,
-    receiver: msg.to,
-    message: msg.body || "",
-    edate: new Date().toISOString(),
-  });
+      // Emit
+      this.io.emit("message", {
+        msg_id: msg.id._serialized,
+        in_out: "O",
+        sender: msg.from,
+        receiver: msg.to,
+        message: msg.body || "",
+        attachment_url: null,
+        attachment_name: null,
+        edate: new Date().toISOString(),
+      });
 
-  console.log(`message_create client // message emitted: ${msg.body} // outgoing only`)
+      // Save to DB
+      await this.db.query(
+        `INSERT INTO user_whatsapp
+        (msg_id, in_out, sender, receiver, message, edate)
+        VALUES ($1,$2,$3,$4,$5,$6)`,
+        [
+          msg.id._serialized,
+          "O",
+          msg.from,
+          msg.to,
+          msg.body || "",
+          new Date()
+        ]
+      );
 
-  await this.prisma.user_whatsapp.create({
-    data: {
-      msg_id: msg.id._serialized,
-      in_out: "O",
-      sender: msg.from,
-      receiver: msg.to,
-      message: msg.body || "",
-      edate: new Date(),
-    },
-  });
-    console.log(`message_create client // message saved to db: ${msg.body} // outgoing only`);
-});
+      console.log("Outgoing text saved:", msg.body);
+    });
 
-
-    this.client
-      .initialize()
-      .catch((err) => console.error('Client init error', err));
+    // INIT
+    this.client.initialize().catch(err => console.error('Client init error:', err));
   }
 
-  // Getters for QR code and readiness
   getQr() { return this.qrDataUrl; }
   isReady() { return this.ready; }
 
-  // Send a text message to a WhatsApp contact
+  // ========================
+  // SEND TEXT MESSAGE
+  // ========================
   async sendMessage(to: string, message: string) {
     if (!this.ready) throw new Error('Client not ready');
 
-    let phone = to.replace(/\D/g, ''); // remove all non-digits
-    if (phone.length === 10) phone = '91' + phone; // If number has only 10 digits (no country code), assume +91 (India)
-    if (phone.startsWith('+')) phone = phone.substring(1); // If number starts with a +, remove it
-
-    // Construct JID
+    let phone = to.replace(/\D/g, '');
+    if (phone.length === 10) phone = '91' + phone;
     const jid = `${phone}@c.us`;
-    console.log(`async sendMessage // 📨 Sending to ${jid}: ${message}`);
+
     const res = await this.client.sendMessage(jid, message);
 
     return res;
   }
 
-  // Get messages from a specific phone number
+  // ========================
+  // GET MESSAGES
+  // ========================
+  async getMessages(phone?: string, limit: number = 100) {
+    let jid = null;
 
-async getMessages(phone?: string, limit: number = 100) {
-  let phoneSearch = undefined;
+    if (phone) {
+      let p = phone.replace(/\D/g, '');
+      if (p.length === 10) p = '91' + p;
+      jid = `${p}@c.us`;
+    }
 
-  if (phone) {
-    let p = phone.replace(/\D/g, '');
-    if (p.length === 10) p = '91' + p;
-    phoneSearch = `${p}@c.us`;
-  }
 
-  const rows = await this.prisma.user_whatsapp.findMany({
-    where: phoneSearch
-      ? {
-          OR: [{ sender: phoneSearch }, { receiver: phoneSearch }]
-        }
-      : undefined,
-    orderBy: { edate: 'asc' },
-    take: limit,
-  });
+      const rows = jid
+        ? await this.db.query(
+            `SELECT * FROM user_whatsapp
+            WHERE sender=$1 OR receiver=$1
+            ORDER BY edate ASC
+            LIMIT $2`,
+            [jid, limit]
+          )
+        : await this.db.query(
+            `SELECT * FROM user_whatsapp
+            ORDER BY edate ASC
+            LIMIT $1`,
+            [limit]
+          );
 
-  // ⭐ Convert BigInt → string here
-  return rows.map(row => ({
-    ...row,
-    whatsID: row.whatsID.toString(),
-  }));
-}
+      return rows.map(row => ({
+        whatsID: row.whatsid?.toString(),
+        msg_id: row.msg_id,
+        in_out: row.in_out,
+        sender: row.sender,
+        receiver: row.receiver,
+        message: row.message,
+        attachment_name: row.attachment_name,
+        attachment_url: row.attachment_path,
+        edate: row.edate,
+      }));
+    }
 
-    // 📤 Send Media (file path, URL, base64)
-    async sendMedia(
-      to: string,
-      filePath: string,
-      caption?: string,
-      fileUrl?: string
-    ){
-      if (!this.ready) throw new Error("WhatsApp client not ready");
+  // ========================
+  // SEND MEDIA
+  // ========================
+  async sendMedia(to: string, filePath: string, caption?: string, fileUrl?: string){
+    if (!this.ready) throw new Error("Not ready");
 
-      let phone = to.replace(/\D/g, "");
-      if (phone.length === 10) phone = "91" + phone;
-      if (phone.startsWith("+")) phone = phone.substring(1);
+    let phone = to.replace(/\D/g, '');
+    if (phone.length === 10) phone = '91' + phone;
+    const jid = `${phone}@c.us`;
 
-      const jid = `${phone}@c.us`;
-      console.log(`📤 Sending media to ${jid}`);
-
-      // Load file as MessageMedia
     const absolutePath = path.resolve(filePath);
     const mimeType = mime.lookup(absolutePath) || "application/octet-stream";
     const fileData = fs.readFileSync(absolutePath, { encoding: "base64" });
@@ -225,32 +242,34 @@ async getMessages(phone?: string, limit: number = 100) {
 
     const media = new MessageMedia(mimeType, fileData, filename);
 
-    // Send via WhatsApp
-    const result = await this.client.sendMessage(jid, media, { caption });
+    let result;
 
-    console.log("📨 WA Media sent successfully");
-
-      // Save OUTGOING media message to DB
-        try {
-          await this.prisma.user_whatsapp.create({
-            data: {
-              msg_id: result.id._serialized,
-              in_out: "O",
-              sender: this.client.info.wid._serialized,
-              receiver: jid,   
-              message: caption || null, // Caption text (optional) 
-              attachment_path: fileUrl || null, // File URL (public)  
-              attachment_type: mimeType, // Mime type (image/png, audio/mpeg, application/pdf, etc)
-              edate: new Date(),
-            },
-          });
-
-          console.log(`💾 Media saved to DB: ${fileUrl || filename}`);
-        } catch (err) {
-          console.error("❌ DB Save Error (media):", err);
-        }
-
-  return result;
-  
+    // Audio caption fix
+    if (mimeType.startsWith("audio/")) {
+      result = await this.client.sendMessage(jid, media);
+      if (caption) await this.client.sendMessage(jid, caption);
+    } else {
+      result = await this.client.sendMessage(jid, media, { caption });
     }
+
+    // SAVE OUTGOING MEDIA
+    await this.db.query(
+      `INSERT INTO user_whatsapp
+         (msg_id, in_out, sender, receiver, message, attachment_name, attachment_path, attachment_type, edate)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9)`,
+      [
+        result.id._serialized,
+        "O",
+        this.client.info.wid._serialized,
+        jid,
+        caption || null,
+        filename,
+        fileUrl || filePath,
+        mimeType,
+        new Date()
+      ]
+    );
+
+    return result;
   }
+}

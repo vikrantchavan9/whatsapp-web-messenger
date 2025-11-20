@@ -16,6 +16,7 @@ interface DbMessage {
   sender: string;
   receiver: string;
   message: string | null;
+  attachment_name?: string | null;
   attachment_url?: string | null;
   edate: string; // ISO
 }
@@ -26,6 +27,8 @@ interface LiveIncoming {
   sender?: string;
   receiver?: string;
   message?: string;
+  attachment_url?: string | null;
+  attachment_name?: string | null;
   edate?: string;
 }
 // -----------------------------------------------------
@@ -146,6 +149,8 @@ function mergeDbMessage(m: DbMessage) {
         sender: raw.sender || "",
         receiver: raw.receiver || "",
         message: raw.message || "",
+        attachment_url: raw.attachment_url || null,
+        attachment_name: raw.attachment_name || null,
         edate: raw.edate || new Date().toISOString(),
       };
 
@@ -288,46 +293,44 @@ function mergeDbMessage(m: DbMessage) {
 
                 return (
                   <div key={m.msg_id} className={`flex ${isMe ? "justify-end" : "justify-start"}`}>
-                    <div
-                          className={`max-w-xs p-3 rounded-lg text-sm ${
-                            isMe
-                              ? "bg-green-600 text-white rounded-br-none"
-                              : "bg-gray-800 text-gray-100 rounded-bl-none"
-                          }`}
-                        >
+                  <div
+                    className={`max-w-xs p-3 rounded-2xl text-sm shadow ${
+                      isMe
+                        ? "bg-green-600 text-white rounded-br-none"
+                        : "bg-gray-800 text-gray-100 rounded-bl-none"
+                    }`}
+                  >
 
-                          {/* IMAGE PREVIEW */}
-                          {m.attachment_url && /\.(jpg|jpeg|png|gif|webp)$/i.test(m.attachment_url) && (
-                            <img
-                              src={m.attachment_url}
-                              className="w-full rounded mb-2 border border-gray-700"
-                            />
-                          )}
-
-                          {/* FILE DOWNLOAD */}
-                          {m.attachment_url && !/\.(jpg|jpeg|png|gif|webp)$/i.test(m.attachment_url) && (
-                            <a
-                              href={m.attachment_url}
-                              download
-                              className="mb-2 inline-block bg-black/20 border px-2 py-1 rounded"
-                            >
-                              ⬇ Download Attachment
-                            </a>
-                          )}
-
-                          {/* CAPTION OR MESSAGE */}
-                          {m.message && <div className="mb-1">{m.message}</div>}
-
-                          {/* Sender */}
-                          <div className="text-[10px] opacity-60 mt-1">
-                            {isMe ? "You" : m.sender.replace("@c.us", "")}
-                          </div>
-
-                          {/* Time */}
-                          <div className="text-[10px] opacity-70 mt-1 text-right">
-                            {new Date(m.edate).toLocaleTimeString()}
-                          </div>
+                  {/* IMAGE */}
+                  {fileUrl && /\.(jpg|jpeg|png|gif|webp)$/i.test(fileUrl) && (
+                    <div className="mb-2">
+                      {m.attachment_name && (
+                        <div className="text-xs opacity-80 mt-1 italic">
+                          🖼 {m.attachment_name}
                         </div>
+                      )}
+                    </div>
+                  )}
+                    {/* FILE NAME (PDF, DOCX, etc.) */}
+                  {m.attachment_name && fileUrl && !isImage && (
+                      <a
+                        href={fileUrl}
+                        download
+                        className="flex items-center gap-2 p-2 mb-2 bg-black/20 rounded-lg border border-gray-700 hover:bg-black/30 transition"
+                      >
+                        📄 {m.attachment_name}
+                      </a>
+                    )}
+
+
+                    {/* CAPTION OR MESSAGE */}
+                    {m.message && <div className="mb-1">{m.message}</div>}
+
+                    <div className="flex justify-between text-[10px] opacity-60 mt-2">
+                      <span>{isMe ? "You" : m.sender.replace("@c.us", "")}</span>
+                      <span>{new Date(m.edate).toLocaleTimeString()}</span>
+                    </div>
+                  </div>
 
                   </div>
                 );
