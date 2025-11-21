@@ -28,10 +28,12 @@ export class WhatsappService implements OnModuleInit {
     httpServer.listen(5000, () => console.log('Socket.IO server @5000'));
 
     this.client = new Client({
-      authStrategy: new LocalAuth(),
+        authStrategy: new LocalAuth({
+          clientId: "docker1", 
+        }),
       puppeteer: {
         headless: true,
-        executablePath: '/usr/bin/chromium',
+        executablePath: "/usr/bin/chromium",
         args: [
           '--no-sandbox',
           '--disable-setuid-sandbox',

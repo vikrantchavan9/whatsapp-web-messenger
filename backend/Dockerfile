@@ -1,45 +1,52 @@
-# -------------------------------------------------------
-#   1) Base Image
-# -------------------------------------------------------
-FROM node:18-alpine AS builder
+FROM node:20
 
-# -------------------------------------------------------
-#   2) Install Dependencies
-# -------------------------------------------------------
+# Install system Chromium + ALL required dependencies
+RUN apt-get update && apt-get install -y \
+  chromium \
+  chromium-common \
+  chromium-driver \
+  libx11-xcb1 \
+  libxcomposite1 \
+  libxdamage1 \
+  libxrandr2 \
+  libgbm1 \
+  libasound2 \
+  libatk1.0-0 \
+  libcups2 \
+  libdrm2 \
+  libdbus-1-3 \
+  libxshmfence1 \
+  libnss3 \
+  libxss1 \
+  libxtst6 \
+  libatk-bridge2.0-0 \
+  libgtk-3-0 \
+  libxcb-dri3-0 \
+  libgbm-dev \
+  fonts-liberation \
+  gstreamer1.0-gl \
+  gstreamer1.0-plugins-base \
+  gstreamer1.0-plugins-good \
+  gstreamer1.0-plugins-bad \
+  gstreamer1.0-libav \
+  --no-install-recommends && \
+  rm -rf /var/lib/apt/lists/*
+  
 WORKDIR /app
 
-# Copy only package files first
-COPY package*.json ./
+# Install Chromium for whatsapp-web.js
+RUN apt-get update && apt-get install -y chromium
 
-# Install all dependencies
+COPY package.json package-lock.json ./
+
 RUN npm install
 
-# Copy source code
 COPY . .
 
-# Generate Prisma Client
-RUN npx prisma generate
-
-# Build NestJS
+# Build TypeScript → JavaScript (dist/)
 RUN npm run build
 
-# -------------------------------------------------------
-#   3) Production Image
-# -------------------------------------------------------
-FROM node:18-alpine AS production
+EXPOSE 3001
 
-WORKDIR /app
-
-# Copy node_modules from builder
-COPY --from=builder /app/node_modules ./node_modules
-
-# Copy compiled dist
-COPY --from=builder /app/dist ./dist
-
-# Copy prisma schema (required for migrations)
-COPY --from=builder /app/prisma ./prisma
-
-# -------------------------------------------------------
-#   4) Start Command
-# -------------------------------------------------------
-CMD ["node", "dist/main.js"]
+# Start production NestJS
+CMD ["npm", "run", "start:prod"]

@@ -1,32 +1,42 @@
-version: '3.8'
-
 services:
-  db:
-    image: postgres:16
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: whatsapp-pgadmin
     environment:
-      POSTGRES_USER: vikrant
-      POSTGRES_PASSWORD: pmP2y3YDa3
-      POSTGRES_DB: saubh_db
+      PGADMIN_DEFAULT_EMAIL: pgadmin@email.com
+      PGADMIN_DEFAULT_PASSWORD: PASSWORD
     ports:
-      - "5432:5432"
+      - "5050:80"
     volumes:
-      - pgdata:/var/lib/postgresql/data
+      - pgadmin_data:/var/lib/pgadmin
 
   backend:
-    build: ./backend
-    environment:
-      DATABASE_URL: postgres://vikrant:pmP2y3YDa3@db:5432/saubh_db?schema=public
+    container_name: whatsapp-backend
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
     ports:
-      - "3001:3000"
-    depends_on:
-      - db
+      - "3001:3001"
+      - "5000:5000"
+    shm_size: "1gb"
+    env_file:
+      - ${BACKEND_ENV_FILE}
+    volumes:
+      - backend_uploads:/app/uploads
 
   frontend:
-    build: ./frontend
+    container_name: whatsapp-frontend
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
     ports:
-      - "3000:80"
+      - "3000:3000"
+    env_file:
+      - ${FRONTEND_ENV_FILE}
     depends_on:
       - backend
 
 volumes:
-  pgdata:
+  backend_uploads:
+  pgadmin_data: 
