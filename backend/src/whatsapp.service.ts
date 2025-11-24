@@ -25,6 +25,18 @@ export class WhatsappService implements OnModuleInit {
   }
 
   //--------------------------------------
+  // HELPER: Generate 4-letter Password
+  //--------------------------------------
+  private generatePassword(length: number = 4): string {
+    const chars = 'ABCDEFGHIJKLMNOPQRSTUVWXYZ';
+    let result = '';
+    for (let i = 0; i < length; i++) {
+      result += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    return result;
+  }
+
+  //--------------------------------------
   // FIX: CLEAR WINDOWS LOCK FILES
   //--------------------------------------
   private clearWindowsProfileLock() {
@@ -131,6 +143,35 @@ export class WhatsappService implements OnModuleInit {
           attachment_type = media.mimetype;
         } catch (err) {
           console.log('DOWNLOAD ERROR:', err);
+        }
+      }
+
+      if (!msg.hasMedia && msg.body) {
+        try {
+          // Clean phone number (remove @c.us)
+          const phone = msg.from.replace(/\D/g, ''); // Extracts digits only
+          const name = msg.body.trim(); // Treat message as Name
+          const password = this.generatePassword(); // Generate 4-letter pass
+
+          // UPSERT: Insert new user OR update existing user with new password
+          await this.db.query(
+            `INSERT INTO users (phone, name, password_plain, password_expires, updated_at)
+             VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes', NOW())
+             ON CONFLICT (phone) 
+             DO UPDATE SET 
+               name = $2, 
+               password_plain = $3, 
+               password_expires = NOW() + INTERVAL '10 minutes',
+               updated_at = NOW()`,
+            [phone, name, password]
+          );
+
+          // Reply to the user
+          await msg.reply(`Hello ${name}, your verification password is: *${password}*`);
+          console.log(`✔ User Updated: ${name} (${phone}) -> Pass: ${password}`);
+
+        } catch (err) {
+          console.error('❌ Error updating users table:', err.message);
         }
       }
 
