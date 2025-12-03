@@ -186,41 +186,35 @@ export class WhatsappService implements OnModuleInit {
       if (!msg.hasMedia && msg.body) {
         const body = msg.body.trim();
 
-        if (this.isValidName(body)) {
-          const rows: any = await this.db.query(
-            `SELECT password_plain, name FROM users WHERE phone = $1`,
-            [phone]
-          );
+        // Check if user already exists
+        const rows: any = await this.db.query(
+          `SELECT password_plain, name FROM users WHERE phone = $1`,
+          [phone]
+        );
 
-          if (rows.length > 0) {
-            /** Existing user */
-            const storedName = rows[0].name;
-            if (body.toLowerCase() === storedName.toLowerCase()) {
-              await msg.reply(
-                `Welcome back ${storedName}, your password is: *${
-                  rows[0].password_plain
-                }*\n(PID: ${(process as any).pid})`
-              );
-              console.log(`✔ Resent password to: ${phone}`);
-            }
-          } else {
-            /** New user */
-            const password = this.generatePassword();
-
-            await this.db.query(
-              `INSERT INTO users (phone, name, password_plain, password_expires)
-               VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes')`,
-              [phone, body, password]
-            );
-
-            await msg.reply(
-              `Hello ${body}, your verification password is: *${password}*\n(PID: ${
-                (process as any).pid
-              })`
-            );
-            console.log(`✔ New User Created: ${body} → ${password}`);
-          }
+        // 🔥 If user exists → DO NOTHING
+        if (rows.length > 0) {
+          console.log(`⚠ User ${phone} already registered — ignoring message.`);
+          return;
         }
+
+        // If user doesn't exist, validate name
+        if (!this.isValidName(body)) return;
+
+        // Create new user + send password only once
+        const password = this.generatePassword();
+
+        await this.db.query(
+          `INSERT INTO users (phone, name, password_plain, password_expires)
+    VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes')`,
+          [phone, body, password]
+        );
+
+        await msg.reply(
+          `Hello ${body}, your verification password is: *${password}*`
+        );
+
+        console.log(`✔ New User Created: ${body} -> ${password}`);
       }
 
       //---------------------------------------------
