@@ -1,5 +1,5 @@
-import { Injectable } from '@nestjs/common';
-import { Pool } from 'pg';
+import { Injectable } from "@nestjs/common";
+import { Pool } from "pg";
 
 @Injectable()
 export class PostgresService {
@@ -12,9 +12,9 @@ export class PostgresService {
       database: process.env.DB_NAME,
       password: process.env.DB_PASSWORD,
       port: parseInt(process.env.DB_PORT || "5432"),
-        ssl: {
-    rejectUnauthorized: false
-  }
+      ssl: {
+        rejectUnauthorized: false,
+      },
     });
   }
 

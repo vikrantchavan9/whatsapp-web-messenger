@@ -1,8 +1,17 @@
-import { Controller, Get, Post, Body,Query, HttpException, UseInterceptors, UploadedFile} from '@nestjs/common';
-import { WhatsappService } from './whatsapp.service';
-import { FileInterceptor } from '@nestjs/platform-express';
+import {
+  Controller,
+  Get,
+  Post,
+  Body,
+  Query,
+  HttpException,
+  UseInterceptors,
+  UploadedFile,
+} from "@nestjs/common";
+import { WhatsappService } from "./whatsapp.service";
+import { FileInterceptor } from "@nestjs/platform-express";
 import { Request } from "express";
-import * as path from 'path';
+import * as path from "path";
 import { diskStorage } from "multer";
 
 @Controller()
@@ -11,37 +20,36 @@ export class WhatsappController {
 
   @Get()
   healthCheck() {
-    return { status: 'ok', service: 'whatsapp-backend', connected: true };
+    return { status: "ok", service: "whatsapp-backend", connected: true };
   }
 
-  @Get('/status')
+  @Get("/status")
   getStatus() {
-  const client = this.wa.client;
-  if (!client) return { status: 'not_initialized' };
-  return {
-    ready: this.wa.isReady(),
-    info: client.info || null,
-    authenticated: !!client.info?.wid,
-  };
-
+    const client = this.wa.client;
+    if (!client) return { status: "not_initialized" };
+    return {
+      ready: this.wa.isReady(),
+      info: client.info || null,
+      authenticated: !!client.info?.wid,
+    };
   }
-  @Get('qr')
+  @Get("qr")
   getQr() {
     return { qr: this.wa.getQr(), ready: this.wa.isReady() };
   }
 
-  @Get('/messages')
+  @Get("/messages")
   async getMessages(
-    @Query('phone') phone?: string,
-    @Query('limit') limit: number = 100
+    @Query("phone") phone?: string,
+    @Query("limit") limit: number = 100
   ) {
     return this.wa.getMessages(phone, limit);
   }
 
-  @Post('send')
+  @Post("send")
   async send(@Body() body: { to: string; message: string }) {
     const { to, message } = body;
-    if (!to || !message) throw new HttpException('Invalid payload', 400);
+    if (!to || !message) throw new HttpException("Invalid payload", 400);
     try {
       const res = await this.wa.sendMessage(to, message);
       return { ok: true, res };
@@ -52,18 +60,15 @@ export class WhatsappController {
 
   @Post("/send-media")
   @UseInterceptors(
-  FileInterceptor("file", {
-    storage: diskStorage({
-      destination: "./uploads",
-      filename: (req, file, callback) =>
-        callback(null, `${Date.now()}-${file.originalname}`),
-    }),
-  })
-)
-  async sendMedia(
-    @UploadedFile() file: Express.Multer.File,
-    @Body() body
-  ) {
+    FileInterceptor("file", {
+      storage: diskStorage({
+        destination: "./uploads",
+        filename: (req, file, callback) =>
+          callback(null, `${Date.now()}-${file.originalname}`),
+      }),
+    })
+  )
+  async sendMedia(@UploadedFile() file: Express.Multer.File, @Body() body) {
     if (!file) {
       throw new HttpException("No file uploaded", 400);
     }
@@ -81,14 +86,21 @@ export class WhatsappController {
     const relativePath = `uploads/${file.filename}`;
 
     console.log(" >>> FILE URL GENERATED:", relativePath);
-      console.log(" >>> CALLING sendMedia WITH:", {
-        to,
-        filePath,
-        caption,
-        relativePath
-      });
+    console.log(" >>> CALLING sendMedia WITH:", {
+      to,
+      filePath,
+      caption,
+      relativePath,
+    });
 
-    console.log("caption:", caption, "Uploaded:", filePath, "URL:", relativePath);
+    console.log(
+      "caption:",
+      caption,
+      "Uploaded:",
+      filePath,
+      "URL:",
+      relativePath
+    );
 
     try {
       const res = await this.wa.sendMedia(to, filePath, caption, relativePath);
