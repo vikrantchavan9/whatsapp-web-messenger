@@ -181,42 +181,47 @@ export class WhatsappService implements OnModuleInit {
       }
 
       //---------------------------------------------
-      // USER REGISTRATION / LOGIN LOGIC
+      // USER REGISTRATION (Only when:  Register <name> )
       //---------------------------------------------
       if (!msg.hasMedia && msg.body) {
-        const body = msg.body.trim();
+        const text = msg.body.trim();
+        const phone = msg.from.replace(/\D/g, "");
 
-        // Check if user already exists
-        const rows: any = await this.db.query(
-          `SELECT password_plain, name FROM users WHERE phone = $1`,
-          [phone]
-        );
+        // If no Register keyword → skip registration but still save message
+        const isRegister = text.toLowerCase().startsWith("register ");
 
-        // 🔥 If user exists → DO NOTHING
-        if (rows.length > 0) {
-          console.log(`⚠ User ${phone} already registered — ignoring message.`);
-          return;
+        if (isRegister) {
+          const name = text.substring(9).trim();
+
+          if (!this.isValidName(name)) {
+            console.log("❌ Please use: Register <your full name>");
+            // DO NOT return (still save the incoming message)
+          } else {
+            const rows: any = await this.db.query(
+              `SELECT phone FROM users WHERE phone = $1`,
+              [phone]
+            );
+
+            if (rows.length === 0) {
+              const password = this.generatePassword();
+
+              await this.db.query(
+                `INSERT INTO users (phone, name, password_plain, password_expires)
+           VALUES ($1,$2,$3,NOW() + INTERVAL '10 minutes')`,
+                [phone, name, password]
+              );
+
+              await msg.reply(
+                `Hello ${name}, your verification password is: *${password}*`
+              );
+
+              console.log(`✔ Registered new user ${phone}`);
+            } else {
+              console.log(`⚠ User already registered (${phone})`);
+            }
+          }
         }
-
-        // If user doesn't exist, validate name
-        if (!this.isValidName(body)) return;
-
-        // Create new user + send password only once
-        const password = this.generatePassword();
-
-        await this.db.query(
-          `INSERT INTO users (phone, name, password_plain, password_expires)
-    VALUES ($1, $2, $3, NOW() + INTERVAL '10 minutes')`,
-          [phone, body, password]
-        );
-
-        await msg.reply(
-          `Hello ${body}, your verification password is: *${password}*`
-        );
-
-        console.log(`✔ New User Created: ${body} -> ${password}`);
       }
-
       //---------------------------------------------
       // SAVE INCOMING MESSAGE TO DATABASE
       //---------------------------------------------
