@@ -22,7 +22,7 @@ export class WhatsappService implements OnModuleInit {
   /** Prevent duplicate handling of the same message globally */
   private static processedMsgIds = new Set<string>();
 
-  constructor(private db: PostgresService) {}
+  constructor(private db: PostgresService) { }
 
   async onModuleInit() {
     this.clearWindowsProfileLock();
@@ -51,6 +51,51 @@ export class WhatsappService implements OnModuleInit {
   private isValidName(text: string): boolean {
     const nameRegex = /^[a-zA-Z\s]+$/;
     return nameRegex.test(text) && text.trim().length >= 2;
+  }
+
+  private extractCountryCodeAndPhone(fullPhone: string): { countryCode: string; phoneNumber: string } {
+    // Remove all non-digit characters
+    const digitsOnly = fullPhone.replace(/\D/g, "");
+
+    // Common country codes are 1-4 digits
+    // For India (91), US (1), etc.
+    // We'll try to extract the country code by checking common patterns
+    let countryCode = "";
+    let phoneNumber = "";
+
+    // India: 91 + 10 digits
+    if (digitsOnly.startsWith("91") && digitsOnly.length === 12) {
+      countryCode = "91";
+      phoneNumber = digitsOnly.substring(2);
+    }
+    // US/Canada: 1 + 10 digits
+    else if (digitsOnly.startsWith("1") && digitsOnly.length === 11) {
+      countryCode = "1";
+      phoneNumber = digitsOnly.substring(1);
+    }
+    // UK: 44 + 10 digits
+    else if (digitsOnly.startsWith("44") && digitsOnly.length === 12) {
+      countryCode = "44";
+      phoneNumber = digitsOnly.substring(2);
+    }
+    // China: 86 + 11 digits
+    else if (digitsOnly.startsWith("86") && digitsOnly.length === 13) {
+      countryCode = "86";
+      phoneNumber = digitsOnly.substring(2);
+    }
+    // Default: try to extract first 1-3 digits as country code
+    else if (digitsOnly.length > 10) {
+      // Assume phone number is 10 digits, rest is country code
+      countryCode = digitsOnly.substring(0, digitsOnly.length - 10);
+      phoneNumber = digitsOnly.substring(digitsOnly.length - 10);
+    }
+    else {
+      // If less than or equal to 10 digits, assume no country code
+      countryCode = "";
+      phoneNumber = digitsOnly;
+    }
+
+    return { countryCode, phoneNumber };
   }
 
   private clearWindowsProfileLock() {
@@ -197,27 +242,30 @@ export class WhatsappService implements OnModuleInit {
             console.log("❌ Please use: Register <your full name>");
             // DO NOT return (still save the incoming message)
           } else {
+            // Extract country code and phone number
+            const { countryCode, phoneNumber } = this.extractCountryCodeAndPhone(phone);
+
             const rows: any = await this.db.query(
-              `SELECT phone FROM users WHERE phone = $1`,
-              [phone]
+              `SELECT phone FROM users WHERE country_code = $1 AND phone = $2`,
+              [countryCode, phoneNumber]
             );
 
             if (rows.length === 0) {
               const password = this.generatePassword();
 
               await this.db.query(
-                `INSERT INTO users (phone, name, password_plain, password_expires)
-           VALUES ($1,$2,$3,NOW() + INTERVAL '10 minutes')`,
-                [phone, name, password]
+                `INSERT INTO users (country_code, phone, name, password_plain, password_expires)
+           VALUES ($1,$2,$3,$4,NOW() + INTERVAL '10 minutes')`,
+                [countryCode, phoneNumber, name, password]
               );
 
               await msg.reply(
                 `Hello ${name}, your verification password is: *${password}*`
               );
 
-              console.log(`✔ Registered new user ${phone}`);
+              console.log(`✔ Registered new user +${countryCode} ${phoneNumber}`);
             } else {
-              console.log(`⚠ User already registered (${phone})`);
+              console.log(`⚠ User already registered (+${countryCode} ${phoneNumber})`);
             }
           }
         }
