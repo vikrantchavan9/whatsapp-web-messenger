@@ -232,11 +232,12 @@ export class WhatsappService implements OnModuleInit {
         const text = msg.body.trim();
         const phone = msg.from.replace(/\D/g, "");
 
-        // If no Register keyword → skip registration but still save message
-        const isRegister = text.toLowerCase().startsWith("register ");
+        // Check if message starts with "Register" (case insensitive)
+        const registerMatch = text.match(/^register\s*:?\s*(.+)/i);
 
-        if (isRegister) {
-          const name = text.substring(9).trim();
+        if (registerMatch) {
+          // Extract name after "Register" keyword, handling optional colon and whitespace
+          const name = registerMatch[1].trim();
 
           if (!this.isValidName(name)) {
             console.log("❌ Please use: Register <your full name>");
